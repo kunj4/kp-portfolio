@@ -1,0 +1,140 @@
+---
+title: 'Building a Chrome Extension to Guilt Trip Users Before Talking to Chatbots'
+date: '2025-04-08'
+tags: ['Chrome Extension', 'AI', 'Chatbots', 'Google Apps Script', 'S3', 'Cybersecurity']
+draft: false
+summary: 'Learn how to build a Chrome extension that enforces Acceptable Use Policies (AUP) before users interact with AI chatbots, using S3, Google Apps Script, and session cookies.'
+images: ['/static/images/ai-chatbot-extension.png']
+authors: ['default']
+---
+
+![ai-chatbot-extension](/static/images/ai-chatbot-extension.png)
+
+So here's a fun one.
+
+You're running a company. People are curious, smart, and sometimes way too comfortable typing sensitive stuff into AI chatbots. You send out reminders, you write a whole Acceptable Use Policy (AUP) that nobody reads, and you hope for the best. But now you want something better. Something annoying enough to make people pause before they blurt out client data to ChatGPT.
+
+Welcome to the world of browser extensions.
+
+### What We're Building
+
+We're making a Google Chrome extension that does the following:
+
+1. Watches for users visiting any AI chatbot site (ChatGPT, Gemini, Grok, etc.).
+2. Fetches an up-to-date list of these domains from an S3 bucket (because hardcoding is for people who like regrets).
+3. When a user hits one of those sites, it slaps an overlay on the page.
+4. The overlay makes the site unusable until the user clicks "I Agree" to your AUP.
+5. If they don't agree? Boom. Tab closes.
+6. Log the user's action (agree or reject) in a Google Sheet.
+7. Store a cookie so we don't bug them every single time they visit.
+
+Every page load. Every refresh. No escape... unless they've agreed already during the same session.
+
+### Why Use Google Apps Script?
+
+Because you probably already live in the Google Workspace world and deploying scripts through your admin console is a power move. Also, Apps Script lets you tap into Drive, Sheets, and other Google services easily if you want to extend this.
+
+### Core Pieces of the Puzzle
+
+Here's the breakdown:
+
+- Manifest file to tell Chrome what your extension does.
+- Content script to inject the overlay on AI chatbot pages.
+- Background script to handle tab events and fetch the domain list from S3.
+- Overlay UI with your AUP reminder and buttons to agree or nope out.
+- Logging function via Apps Script Web App endpoint to record who clicked what and when.
+- Session cookie that stores the "Agreed" status for the duration of the browser session or until Google login session ends.
+
+### The Logic Flow
+
+1. Extension loads
+2. User opens a tab or refreshes
+3. Background script checks URL against list pulled from S3
+4. If it's a match,
+5. check if the cookie exists
+6. If not, inject overlay
+7. User must click "I Agree" to continue
+8. If they click "Reject", the tab is closed
+9. Either way, the action is sent via fetch() to a Google Apps Script endpoint to log it
+10. If agreed, set a session cookie to avoid re-prompting
+
+### Fetching the Domain List from S3
+
+Keep it simple. Your background script should fetch a plain text or JSON file from a public (or signed) S3 URL. For example:
+
+```python
+[
+  "chat.openai.com",
+  "gemini.google.com",
+  "grok.x.ai"
+]
+```
+
+This list is fetched on every tab load/refresh, so you can update it centrally without redeploying the extension.
+
+### Overlay Logic
+
+The overlay itself is injected via a content script. It should:
+
+- Cover the entire page with a semi-opaque layer
+- Disable scrolling/interactions
+- Show a modal with your message
+- Provide two buttons: "I Agree" and "Reject"
+
+If the user agrees, store a session cookie so we don’t keep pestering them:
+
+```javascript
+// Set session cookie
+document.cookie = 'aiAupAccepted=true; path=/;'
+```
+
+Later, check for the cookie before showing the overlay:
+
+```javascript
+const cookies = document.cookie.split('; ').reduce((acc, cookie) => {
+  const [name, value] = cookie.split('=')
+  acc[name] = value
+  return acc
+}, {})
+
+if (cookies['aiAupAccepted'] !== 'true') {
+  showOverlay()
+}
+```
+
+Here’s the logging part again, just to wire everything up:
+
+```javascript
+fetch('https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec', {
+  method: 'POST',
+  body: JSON.stringify({
+    userEmail: 'user@example.com',
+    action: 'agree', // or 'reject'
+    domain: window.location.hostname,
+    timestamp: new Date().toISOString(),
+  }),
+  headers: {
+    'Content-Type': 'application/json',
+  },
+})
+```
+
+And on the Apps Script side, a simple handler:
+
+```javascript
+function doPost(e) {
+  const sheet = SpreadsheetApp.openById('YOUR_SHEET_ID').getSheetByName('Log')
+  const data = JSON.parse(e.postData.contents)
+  sheet.appendRow([new Date(), data.userEmail, data.domain, data.action])
+  return ContentService.createTextOutput('OK')
+}
+```
+
+Will this solve all your data governance issues? Nope. But it will:
+
+- Slow people down just enough to think
+- Show you're taking reasonable steps to enforce policy
+- Annoy just the right amount to make them remember the rule
+- Not annoy them every 10 seconds, thanks to cookies
+
+It’s not Big Brother, it’s just a slightly overprotective Browser Dad!

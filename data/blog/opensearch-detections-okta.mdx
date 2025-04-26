@@ -1,0 +1,154 @@
+---
+title: 'Automating Okta Log Detections with OpenSearch and Python (a.k.a. Stop Making Me Dig Through Logs)'
+date: '2025-03-25'
+tags:
+  ['Cybersecurity', 'Okta', 'OpenSearch', 'Automation', 'Python', 'Jira', 'SOC', 'Log Monitoring']
+draft: false
+summary: 'Learn how to automate Okta log detections using OpenSearch and Python to identify risky activity, reduce noise, and streamline SOC workflows by creating actionable Jira tickets.'
+images: ['/static/images/opensearch-detections-okta.png']
+authors: ['default']
+---
+
+![opensearch-detections-okta.png](/static/images/opensearch-detections-okta.png)
+
+Okta logs are full of useful security signals. They’re also full of noise. Sifting through them manually? That's a hard no. We needed a way to reliably detect risky activity, send alerts to our SOC, and not burn hours staring at a log viewer like it owes us money.
+
+Here’s how I set up automated detections in OpenSearch that monitor Okta logs, trigger on specific patterns, and call a Python webhook to create Jira tickets for our SOC to review. It’s not magic. It’s YAML, Python, and a healthy mistrust of everything in a login audit trail.
+
+### Why Automate Okta Log Detections?
+
+Because:
+
+- Suspicious logins don’t announce themselves.
+- Brute force attempts happen quietly.
+- Users do weird things. Often.
+
+You _could_ wait for something to blow up. Or, you could monitor for patterns that actually mean something and reduce your detection-to-ticket pipeline to a few seconds.
+
+### The Setup
+
+- Okta tenant streaming logs to a centralized location
+- OpenSearch (Elasticsearch fork, but with less licensing drama) with alerting plugins
+- Python webhook endpoint that handles POSTs and pushes to Jira
+- Jira for tracking and escalation
+
+### What to Detect in Okta Logs
+
+Okta logs come with a ton of event types. Here are a few that you probably want to keep an eye on:
+
+1. Impossible Travel
+
+- `eventType`: `user.session.start`
+- Check for IP geo-location jumps that defy the laws of physics (e.g., login from New York, then 2 minutes later from Singapore).
+- Bonus: Integrate MaxMind or similar to resolve IPs to locations.
+
+2. Brute Force or Spray Attempts
+
+- `eventType`: `user.authentication.failed`
+- Watch for high volumes of login failures from the same IP or targeting multiple accounts
+- Correlate with `user.authentication.sso` or `user.account.lock` events
+
+3. MFA Fatigue (Yes, That’s a Thing Now)
+
+- Multiple `user.mfa.challenge` followed by success after N attempts
+- High volume of challenges without success, then one successful push. Looks sketchy? It probably is.
+
+4. Privilege Escalation
+
+- `eventType`: `user.account.privilege.grant`
+- Or anything related to group changes (group.user_membership.add)
+- Especially if the user granting access is the same user receiving it. Sneaky.
+
+### OpenSearch Monitors
+
+OpenSearch monitors let you define:
+
+- Query: DSL that filters logs based on your detection pattern
+- Trigger: Conditions under which an alert is fired
+- Action: Where to send the alert (in our case, to a webhook)
+
+Example: detecting impossible travel
+
+```python
+"query": {
+  "bool": {
+    "must": [
+      { "match": { "eventType": "user.session.start" } },
+      { "range": { "geo_distance": { "gte": "5000km" } } }
+    ]
+  }
+}
+```
+
+(Yes, this is simplified. You’ll need to correlate timestamps and session IDs yourself. Enjoy.)
+
+Then define a trigger:
+
+```python
+"trigger": {
+  "condition": {
+    "script": {
+      "source": "ctx.results[0].hits.total.value > 0"
+    }
+  }
+}
+```
+
+And send it to your webhook:
+
+```python
+"actions": [
+  {
+    "name": "Send to Python Webhook",
+    "destination": {
+      "endpoint": "https://myendpoint.company.com/okta-detections"
+    },
+    "message": "Possible impossible travel detected for user {{ctx.results.0.hits.hits.0._source.actor.alternateId}}"
+  }
+]
+```
+
+### The Python Webhook
+
+This endpoint receives POSTs from OpenSearch and creates a Jira ticket. Here’s the basic flow:
+
+```python
+from flask import Flask, request
+import requests
+
+app = Flask(__name__)
+
+@app.route('/okta-detections', methods=['POST'])
+def handle_alert():
+    data = request.json
+    user = data['ctx']['results'][0]['hits']['hits'][0]['_source']['actor']['alternateId']
+    summary = f"Security Alert: Suspicious Okta Activity for {user}"
+
+    jira_payload = {
+        "fields": {
+            "project": {"key": "SEC"},
+            "summary": summary,
+            "description": str(data),
+            "issuetype": {"name": "Task"}
+        }
+    }
+
+    response = requests.post(
+        "https://yourcompany.atlassian.net/rest/api/2/issue",
+        json=jira_payload,
+        auth=("your-jira-user", "your-jira-api-token")
+    )
+
+    return {"status": "Ticket created", "jira_response": response.json()}
+```
+
+Yes, error handling is missing. So is authentication. You’re in security. You’ll figure it out.
+
+### Final Thoughts
+
+This setup makes detections visible, trackable, and reviewable without relying on someone to be staring at dashboards 24/7.
+
+Could you plug this into Slack or Teams? Sure. But Jira makes sure it doesn’t vanish into the noise. Plus, SOC needs a ticket to say they did the thing.
+
+And now, a question for you:
+What other Okta patterns should we flag? Suspicious admin tool use? Or maybe the classic “deactivate-reactivate-reactivate” shuffle?

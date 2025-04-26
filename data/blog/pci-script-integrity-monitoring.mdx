@@ -1,0 +1,139 @@
+---
+title: 'Automating PCI Script Integrity Monitoring: Because Manual Checks Are a Terrible Use of Your Time'
+date: '2025-03-22'
+tags: ['Cybersecurity', 'PCI DSS', 'Script Integrity', 'Automation', 'AI', 'Jira', 'Open-Source']
+draft: false
+summary: 'Automate PCI script integrity monitoring using AI, Playwright, Jira, and open-source tools to ensure compliance with PCI DSS 4.0 by detecting and managing unauthorized script changes.'
+images: ['/static/images/pci-script-integrity-monitoring.png']
+authors: ['default']
+---
+
+![pci-script-integrity-monitoring.png](/static/images/pci-script-integrity-monitoring.png)
+
+With PCI DSS 4.0 now breathing down our necks, script integrity monitoring isn’t just a “nice to have” — it’s mandatory. Specifically, Requirement 6.4.3 in PCI DSS 4.0 states that you must maintain the integrity of scripts that are loaded and executed in the consumer’s browser on the payment page. In plain English: if someone injects shady JavaScript into your payment page, you better catch it — before _Visa_ does.
+
+So how do you monitor your scripts without manually opening DevTools like a caveman every day? Sweet, script-checking, sanity-saving automation, and AI!
+
+### The Short Version
+
+Attackers love the client side because it’s usually the wild west. They inject malicious scripts into payment pages, skim card data, and vanish. The only way to stay ahead is to continuously monitor what’s running on your payment page — not just at deployment time, but always.
+
+That’s where my automated script integrity monitoring flow comes in. I’ve built a system that:
+
+1. Uses AI to interact with your site like a user and find the live payment page.
+2. Extracts all headers and scripts from the rendered page.
+3. Compares those scripts and header values against an approved list.
+4. Flags changes and routes them through a Jira-based approval workflow.
+
+Now let’s break it down.
+
+### Step 1: AI Finds the Payment Page So You Don’t Have To
+
+This is where things get fun. I use the [browser-use](https://github.com/browser-use/browser-use) package — which builds on Playwright — and hand it over to an OpenAI agent that knows how to browse, click buttons, close popups, and find the real payment page dynamically.
+
+Here’s how that looks in code:
+
+```python title="Payment Page Script Monitor"
+from browser_use import Agent, Browser, Controller, BrowserContext, BrowserConfig, BrowserContextConfig
+from pydantic import BaseModel
+from openai import OpenAI
+
+class App:
+    APP_EMAIL = os.environ["APP_EMAIL"]
+    APP_PASSWORD = os.environ["APP_PASSWORD"]
+    APP_DOMAINS = ["website.com"]
+
+class PaymentURL(BaseModel):
+    payment_page_url: str
+
+controller = Controller(output_model=PaymentURL)
+
+async def get_payment_page_url():
+    config = BrowserContextConfig(user_agent="App Security CheckoutScriptMonitor")
+
+    browser = Browser(
+        config=BrowserConfig(
+            new_context_config=BrowserContextConfig(
+                allowed_domains=App.APP_DOMAINS,
+            ),
+        )
+    )
+
+    context = BrowserContext(browser=browser, config=config)
+
+    sensitive_data = {
+        "url": "https://website.com/",
+        "email": App.APP_EMAIL,
+        "password": App.APP_PASSWORD,
+    }
+
+    agent = Agent(
+        task="""Go to url and login with the following credentials:
+                The email is email and password is password.
+                Find button with text 'Next step' and click on it. This should redirect you to the payment page, if any popups show up, close them.
+                If it is the payment page, extract the full URL and log it.""",
+        llm=ChatOpenAI(model="gpt-4o"),
+        sensitive_data=sensitive_data,
+        browser_context=context,
+        controller=controller,
+        generate_gif=True,
+    )
+
+    history = await agent.run()
+    result = json.loads(history.final_result())
+    return result.get("payment_page_url")
+```
+
+The best part? It generates a GIF of the interaction so you can attach it to the Jira ticket and prove the script didn’t just fall from the sky.
+
+### Step 2: Extract Scripts and Headers
+
+Once the agent hands over the URL of the payment page, we use Playwright (via browser-use) to extract the final rendered HTML. Then BeautifulSoup parses it:
+
+```python title="Extract Scripts from URL"
+soup = BeautifulSoup(html, "html.parser")
+scripts = soup.find_all("script")
+script_sources = [(s.get("src"), s.string) for s in scripts]
+```
+
+### Step 3: Compare Against the Approved Script Hashes
+
+This is your golden list — a file or DB of known-good scripts you’ve already vetted and blessed.
+
+```python title="Script Status Check"
+import hashlib
+
+def hash_script(content):
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+for src, inline_code in script_sources:
+    content = inline_code or download_script(src)
+    current_hash = hash_script(content)
+
+    if current_hash not in approved_hashes:
+        create_jira_ticket("Unapproved Script Detected", src or "inline", current_hash)
+```
+
+Same process goes for header mismatches — check actual values against expected ones and fire off a Jira ticket if something’s off.
+
+### Step 4: Let Jira Handle the Bureaucracy
+
+Instead of emailing five people and hoping someone responds, Jira tracks:
+
+- The offending script or header
+- Business justification
+- Security approval
+- Hash updates once approved
+
+You could even automate closing the ticket once the hash is added and the check passes.
+
+### Why This Matters
+
+PCI 4.0 doesn’t care about your good intentions. It wants proof that your payment page scripts are monitored and controlled. Every. Single. Time. A. User. Visits.
+
+This system gives you:
+
+- AI-powered page navigation (no hardcoding URLs or DOM selectors)
+- Live runtime monitoring from a browser’s perspective
+- Automated ticketing and approval workflow
+- A trail of evidence if an auditor comes knocking

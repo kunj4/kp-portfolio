@@ -1,0 +1,140 @@
+---
+title: 'How I Automated Vendor Risk Management with Python, Jira, and a Healthy Dose of Sanity (Part I)'
+date: '2025-03-07'
+tags: ['Cybersecurity', 'Vendor Risk', 'HIPAA', 'Open-Source', 'Jira', 'FastAPI', 'Docker']
+draft: false
+summary: 'Automate vendor risk management using Python, Jira, FastAPI, and open-source tools for onboarding, risk scoring, and lifecycle management.'
+images: ['/static/images/vrm-automation-1.png']
+authors: ['default']
+---
+
+![vrm-automation-1.png](/static/images/vrm-automation-1.png)
+
+If you've ever tried managing vendor risk manually, you know it's the kind of soul-crushing work that turns bright-eyed professionals into burnt-out spreadsheet zombies. I wasn't about to let that happen. So I automated the entire vendor risk lifecycle—onboarding, recertification, and offboarding—using Python, Jira, and some open-source magic. Here's how I did it.
+
+### Vendor Onboarding
+
+Vendor onboarding starts with a Jira form. No, not a sprawling spreadsheet or an email chain with 19 forwards. A Jira form.
+
+Each vendor gets their own Jira ticket. When someone wants to onboard a new vendor, they fill out the onboarding form linked to that ticket. The form captures everything: what data is shared, whether it’s PII or PHI, if the vendor connects to prod, etc.
+
+Now, here’s where Python comes in. I wrote a Python script that:
+
+- Listens for a webhook from Jira using FastAPI (deployed in Docker, because I like my environments reproducible and my containers clean).
+- Pulls the form data from the ticket.
+- Applies a custom risk scoring algorithm based on the responses.
+
+For example, if someone casually mentions "Oh yeah, this vendor processes all our patient data," the script assigns a lovely high-risk score. The idea is to encourage your team to build their own risk logic depending on your use case, but let’s be honest—if PHI is involved, you’re not onboarding without some paperwork.
+
+Once the script calculates the score, it updates the Jira ticket with the risk score. Jira automation then kicks in: low scores get auto-approved (congrats, vendor), medium risk prompts a checklist for compliance docs, and high risk pings the business owner with a "we need to talk" note.
+
+To beef up the risk scoring logic, you can also bring in external context using open-source tools. Here's how:
+
+- **Shodan**: Check the vendor's IP for exposed services, open ports, and vulnerabilities. Useful if they’re hosting services or APIs.
+
+- **IntelOwl**: Submit the vendor's domain or IP to gather threat intelligence—malicious associations, WHOIS data, and malware reports.
+
+- **Censys**: Similar to Shodan, but more SSL cert and ASN-focused.
+
+- **UrlScan.io**: Run passive scans on vendor URLs to detect strange scripts, phishing indicators, or sketchy resources being loaded.
+
+- **VirusTotal**: Aggregate malware scans and reputation checks from dozens of engines. Can hit their public API with vendor URLs.
+
+You can plug this into your FastAPI onboarding webhook like so:
+
+```python title="Risk scoring enrichment example"
+# Add to handle_onboarding
+
+from shodan import Shodan
+
+api = Shodan("your_shodan_api_key")
+
+try:
+    host_info = api.host("vendor_ip_or_domain")
+    risk_score += 20 if "vulns" in host_info else 0
+except Exception as e:
+    print("Shodan lookup failed", e)
+
+intel_notes = f"Shodan ports: {host_info.get('ports', [])}\nVulns: {host_info.get('vulns', [])}"
+update_payload["fields"]["customfield_vendor_intel"] = intel_notes
+```
+
+Same applies for IntelOwl, UrlScan, or VirusTotal—just use their APIs to query the domain, then post the intelligence notes back into a custom field in the Jira ticket. This gives the security team extra context before giving a thumbs up.
+
+```python title="Webhook listener"
+# webhook_listener.py
+
+from fastapi import FastAPI, Request
+from datetime import datetime
+import requests
+
+app = FastAPI()
+
+@app.post("/webhook/onboarding")
+async def handle_onboarding(request: Request):
+    data = await request.json()
+    ticket_id = data.get("ticket_id")
+    responses = data.get("form_responses")
+
+    risk_score = 0
+    if responses.get("shares_phi"):
+        risk_score += 50
+    if responses.get("access_to_prod"):
+        risk_score += 30
+
+    update_payload = {
+        "fields": {
+            "customfield_risk_score": risk_score,
+            "customfield_approval_date": datetime.utcnow().isoformat()
+        }
+    }
+    requests.put(f"https://your-jira-instance/rest/api/2/issue/{ticket_id}",
+                 json=update_payload,
+                 auth=("your_user", "your_token"))
+    return {"status": "updated"}
+```
+
+_Vendor Recertification and Vendor Offboarding will be explored in detail in Part II. In the meantime, here's a quick preview of how Jira's native automation can streamline the vendor lifecycle._
+
+### Jira Automation: Orchestrating the Chaos
+
+Jira automation rules are the control tower of this entire setup. Each of the FastAPI webhook endpoints is wired into Jira using Automation for Jira's web request action.
+
+For onboarding:
+
+- A new ticket is created with the onboarding form.
+- Jira automation detects form submission.
+- It sends a POST request to `/webhook/onboarding` with the form data and ticket ID.
+- The webhook calculates the risk score and updates the ticket.
+- Based on the updated risk score field, Jira runs a conditional rule:
+  - Risk < 30 → auto-approve.
+  - Risk 30–70 → assign checklist to compliance.
+  - Risk > 70 → notify the security team and halt onboarding until further review.
+
+For recertification:
+
+- A scheduled automation rule checks every day.
+- If today is 365 days from `customfield_approval_date`, the business owner is pinged with a comment and a smart value prompt to fill in a recertification or offboarding form.
+- When the recertification form is submitted, Jira hits `/webhook/onboarding` again (yes, the same endpoint—you can reuse it to re-score).
+- Security reviews → new approval date is stamped.
+
+For offboarding:
+
+- Jira sends a POST to `/webhook/offboarding`.
+- Once FastAPI confirms offboarding is processed, Jira changes the ticket status to “Offboarded,” triggers final checklist tasks (e.g., notify IT), and logs the offboarding date.
+
+And yes—this is all codeless inside Jira. Just set up your webhooks and smart values, and Jira does the rest.
+
+#### Smart Value Example:
+
+Want to pass ticket data into your webhook? Here's how you’d configure the Web Request action in Jira Automation:
+
+```json title="Custom Data JSON"
+{
+  "ticket_id": "{{issue.key}}",
+  "form_responses": {
+    "shares_phi": "{{issue.fields.customfield_12345}}",
+    "access_to_prod": "{{issue.fields.customfield_67890}}"
+  }
+}
+```

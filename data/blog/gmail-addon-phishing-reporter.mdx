@@ -1,0 +1,141 @@
+---
+title: 'Building a Gmail Add-On to Let Users Snitch on Phishing Emails (and Automate the Aftermath)'
+date: '2025-03-28'
+tags:
+  ['Cybersecurity', 'Phishing', 'Gmail Add-On', 'Automation', 'AI', 'Jira', 'SOC', 'Open-Source']
+draft: false
+summary: 'Learn how to build a Gmail add-on to report phishing emails, automate analysis with AI and ThePhish, and integrate with Jira for streamlined SOC operations.'
+images: ['/static/images/gmail-phishing-report.png']
+authors: ['default']
+---
+
+![gmail-phishing-report.png](/static/images/gmail-phishing-report.png)
+
+Let's talk about phishing. It keeps showing up in inboxes like that one friend who never got the memo that the party's over. And while training users not to click sketchy links is important, I figured: why not also give them a button to do something useful when they suspect foul play?
+
+So I built a Gmail add-on that lets users report phishing emails with a little dignity and a lot less confusion. Here's the breakdown of how it works, what tech it leans on, and how we automate the follow-up dance.
+
+### The User Experience: "Is This Sketchy or Nah?"
+
+When a user sees a suspicious email, they click the add-on. A form pops up asking a few boilerplate-but-essential questions:
+
+- Was this email expected?
+- Do you know the sender?
+- Additional comments? (a.k.a. "What is this nonsense?")
+
+The goal is to keep it light, fast, and not make the user feel like they're filling out a tax form.
+
+Once submitted, the email content + form responses get neatly packaged into a JSON object and shipped off to an S3 bucket. Because if you’re not putting things in S3, are you even doing cloud?
+
+### Behind the Curtain: Automation Flow
+
+The whole backend automation is a tag team between Google Apps Script (for the add-on) and a Python webhook (for the real work).
+
+### Step 1: Data Capture (Google Apps Script)
+
+The Gmail add-on is built with Google Apps Script. It grabs the email content, metadata, and user-submitted form responses. This data is sent to a Python webhook.
+
+```javascript title="Phishing Email Reporter"
+function onSubmitReport(e) {
+  const email = GmailApp.getMessageById(e.messageId)
+  const payload = {
+    subject: email.getSubject(),
+    sender: email.getFrom(),
+    body: email.getPlainBody(),
+    responses: {
+      expected: e.expected,
+      known_sender: e.knownSender,
+      comments: e.comments,
+    },
+  }
+  const options = {
+    method: 'POST',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+  }
+  UrlFetchApp.fetch('https://your-webhook-url.example.com/report', options)
+}
+```
+
+### Step 2: Phish Analysis with ThePhish (Python Webhook)
+
+For more details on ThePhish, check out its [GitHub repository](https://github.com/emalderson/ThePhish).
+
+The webhook receives the payload and forwards the email body to ThePhish:
+
+```python title="Webhook Phishing Email Receiver"
+from flask import Flask, request, jsonify
+import requests
+import json
+
+app = Flask(__name__)
+
+@app.route('/report', methods=['POST'])
+def report():
+    data = request.json
+    email_body = data.get('body')
+
+    thephish_response = requests.post('http://localhost:5000/thephish/analyze', json={"content": email_body})
+    analysis = thephish_response.json()
+
+    verdict = validate_with_ai(analysis)
+    handle_verdict(data, verdict, analysis)
+
+    return jsonify({"status": "processed"})
+
+# dummy function for AI validation
+def validate_with_ai(analysis):
+    if analysis.get('phishing_score', 0) > 0.7:
+        return 'malicious'
+    elif analysis.get('spam_score', 0) > 0.5:
+        return 'spam'
+    else:
+        return 'safe'
+```
+
+### Step 3: Verdict & Response
+
+Depending on the verdict (safe / spam / malicious), one of the following happens:
+
+- Safe: The reporter gets a friendly note. No action taken.
+- Spam: Email gets labeled or filtered accordingly.
+- Malicious: The email is quarantined and/or escalated to SOC. A Jira ticket is also created.
+
+### Integration with Jira: Because Spreadsheets Don’t Scale
+
+When an email is flagged as malicious, we auto-generate a Jira ticket to make sure it doesn't fall into a black hole. Here’s how that works:
+
+```python title="Jira Ticket Creation"
+import requests
+
+def create_jira_ticket(data, verdict):
+    payload = {
+        "fields": {
+            "project": {"key": "SOC"},
+            "summary": f"Phishing Report - {data['subject']}",
+            "description": f"Reported by user. Verdict: {verdict}\n\nDetails:\n{json.dumps(data, indent=2)}",
+            "issuetype": {"name": "Task"}
+        }
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Basic YOUR_ENCODED_CREDS"
+    }
+    response = requests.post('https://your-domain.atlassian.net/rest/api/2/issue/',
+                             json=payload, headers=headers)
+    return response.json()
+```
+
+Native Jira automations take over from there: assigning tasks, setting priorities, notifying analysts, and providing dashboards to track active phishing cases. Your SOC team now has a clean pipeline and actual metrics, not just email chaos.
+
+### Why Bother?
+
+- End users feel empowered. They’re no longer helpless or unsure about what to do with weird emails.
+- SOC teams get context. One JSON blob contains the email, user input, AI analysis, and ThePhish verdict.
+- Automation scales. And integrates with tools your team already uses.
+
+### TL;DR
+
+I built a Gmail add-on that lets users report phishing. It asks simple questions, dumps everything to S3, runs the email through ThePhish and an AI validator, and creates a Jira ticket if needed. It’s clean, quick, and makes both users and SOC analysts a little less miserable.
+
+If phishing emails are going to keep coming, we might as well fight back with some style—and ticketing automation.

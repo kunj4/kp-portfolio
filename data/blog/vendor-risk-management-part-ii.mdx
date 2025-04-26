@@ -1,0 +1,94 @@
+---
+title: 'How I Automated Vendor Risk Management with Python, Jira, and a Healthy Dose of Sanity (Part II)'
+date: '2025-03-13'
+tags: ['Cybersecurity', 'Vendor Risk', 'HIPAA', 'Open-Source', 'Jira', 'FastAPI', 'Docker']
+draft: false
+summary: 'Streamline vendor risk management with Python, Jira, and automation for recertification and offboarding.'
+images: ['/static/images/vrm-automation-2.png']
+authors: ['default']
+---
+
+![vrm-automation-2.png](/static/images/vrm-automation-2.png)
+_If you missed Part I of this series, you can [catch up here](/blog/vendor-risk-management-part-i) before diving in._
+
+### Vendor Recertification
+
+Vendors don’t stay low-risk forever. Stuff changes. Teams forget who even owns the relationship. That’s why recertification exists.
+
+Here’s how it works: When the vendor onboarding form is first submitted and reviewed, the security team provides an initial approval date. That date gets stored in the Jira ticket.
+
+Every 365 days from that date, Jira automation kicks off the recertification process. The business owner gets a prompt with two form options: recertification or offboarding. If the vendor engagement is still ongoing, the owner fills out the recert form. If the vendor is gone, they fill out the offboarding form instead.
+
+Instead of cluttering Jira with new tickets for each review, I just append the new form to the existing vendor ticket. That way, every vendor has a single thread of truth. Each recert form includes a timestamp, a reviewer, and runs through the same risk evaluation process as onboarding.
+
+FastAPI listens for a "Recertification Form Submitted" webhook, grabs the latest answers, re-runs the risk engine, and updates the ticket. If the risk score increased (hello, new access to production DBs?), Jira notifies the right stakeholders. If the vendor is recertified by the security team, the approval date is updated to the new review date.
+
+There’s no need to dig through old emails or guess who last reviewed VendorCorp™ in 2022. It’s all right there in one place. Jira does the organizing, Python does the thinking.
+
+```python title="Scheduled recertification checker"
+# schedule_recerts.py
+from datetime import datetime, timedelta
+import requests
+
+# Called periodically (e.g., daily) to check for upcoming recerts
+def check_and_trigger_recerts():
+    tickets = get_all_vendor_tickets()
+    today = datetime.utcnow().date()
+
+    for ticket in tickets:
+        approval_date = ticket.get("customfield_approval_date")
+        if not approval_date:
+            continue
+
+        last_approved = datetime.fromisoformat(approval_date).date()
+        if (today - last_approved).days >= 365:
+            trigger_recert_or_offboarding(ticket["id"])
+
+def trigger_recert_or_offboarding(ticket_id):
+    # Use Jira API to notify business owner with form options
+    requests.post(f"https://your-jira-instance/rest/api/2/issue/{ticket_id}/comment",
+                  json={"body": "It's time to review this vendor. Please choose to either recertify or offboard."},
+                  auth=("your_user", "your_token"))
+```
+
+---
+
+### Vendor Offboarding
+
+Offboarding is usually where good process goes to die. People forget. Access lingers. Risk thrives. But we’re not doing that.
+
+If the offboarding form is submitted and reviewed by the security team, the ticket is updated accordingly to reflect the vendor's exit.
+
+The same vendor ticket gets a final form: offboarding. This confirms things like, "Did you actually turn off their access?" and "Have we retrieved all our data?" Again, it’s a Jira form. Again, Python watches like a hawk.
+
+Once submitted, the webhook updates the ticket status, triggers any follow-up tasks (like IT deprovisioning), and archives the vendor ticket for compliance tracking. If someone ever audits you (and they will), you’ve got a clean, centralized record of every step.
+
+```python title="Webhook offboarding handler"
+@app.post("/webhook/offboarding")
+async def handle_offboarding(request: Request):
+    data = await request.json()
+    ticket_id = data.get("ticket_id")
+
+    update_payload = {
+        "fields": {
+            "status": "Offboarded",
+            "customfield_offboarded_date": datetime.utcnow().isoformat()
+        }
+    }
+    requests.put(f"https://your-jira-instance/rest/api/2/issue/{ticket_id}",
+                 json=update_payload,
+                 auth=("your_user", "your_token"))
+    return {"status": "offboarding captured"}
+```
+
+---
+
+### Final Thoughts
+
+Final Thoughts (aka Why I Did This Instead of Crying Over Spreadsheets)
+
+This whole setup gave me a scalable, auditable, and surprisingly maintainable vendor risk program. Python handles the logic, Jira handles the humans, and Docker makes sure nothing breaks when I push updates from my laptop to prod.
+
+Could you extend this to include Slack notifications? Definitely. Add reporting dashboards? Go wild. But start with the basics: clear workflows, one ticket per vendor, and logic that fits your actual risk tolerance.
+
+Because vendor risk shouldn't be a mystery. Or a spreadsheet. Or an excuse to lose sleep!
