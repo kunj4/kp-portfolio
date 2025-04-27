@@ -13,7 +13,7 @@ const siteMetadata = {
   language: 'en-us',
   theme: 'system', // system, dark or light
   siteUrl: 'https://borntosting.com/',
-  analyticsURL: 'https://cloud.umami.is/share/D6f98AZB5HgdNaaq/borntosting.com',
+  // analyticsURL: '',
   siteRepo: 'https://github.com/kunj4/kp-portfolio',
   siteLogo: '/static/images/logo.png',
   email: 'kp@borntosting.com',
