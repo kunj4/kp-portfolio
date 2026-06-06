@@ -11,16 +11,21 @@
     "composite": true,
     "esModuleInterop": true,
     "module": "esnext",
+    // pliny ships a non-standard exports map ("./*": "./*") without a `types`
+    // condition, so `bundler`/`node16` resolution can't find its .d.ts files.
+    // Classic `node` resolution is required for it to type-check.
     "moduleResolution": "node",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "preserve",
-    "baseUrl": ".",
     "paths": {
-      "@/components/*": ["components/*"],
-      "@/data/*": ["data/*"],
-      "@/layouts/*": ["layouts/*"],
-      "@/css/*": ["css/*"],
+      "@/components/*": ["./components/*"],
+      "@/data/*": ["./data/*"],
+      "@/layouts/*": ["./layouts/*"],
+      "@/css/*": ["./css/*"],
+      "app/*": ["./app/*"],
+      "css/*": ["./css/*"],
+      "public/*": ["./public/*"],
       "contentlayer/generated": ["./.contentlayer/generated"]
     },
     "plugins": [
