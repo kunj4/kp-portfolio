@@ -16,6 +16,7 @@ const siteMetadata = {
   // analyticsURL: '',
   siteRepo: 'https://github.com/kunj4/kp-portfolio',
   siteLogo: '/static/images/logo.png',
+  socialBanner: '/static/images/twitter-card.png',
   email: 'kp@borntosting.com',
   github: 'https://github.com/kunj4/',
   linkedin: 'https://www.linkedin.com/in/kunjpatel410/',
