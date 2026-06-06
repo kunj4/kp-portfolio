@@ -4,19 +4,21 @@ const withBundleAnalyzer = require('@next/bundle-analyzer')({
   enabled: process.env.ANALYZE === 'true',
 })
 
-const path = require('path')
-const CopyPlugin = require('copy-webpack-plugin')
-
 // You might need to insert additional domains in script-src if you are using external services
 const ContentSecurityPolicy = `
   default-src 'self';
-  script-src 'self' 'unsafe-eval' 'unsafe-inline' giscus.app analytics.umami.is;
+  script-src 'self' 'unsafe-eval' 'unsafe-inline' giscus.app analytics.umami.is us.umami.is;
   style-src 'self' 'unsafe-inline';
-  img-src * blob: data:;
-  media-src *.s3.amazonaws.com;
-  connect-src *;
+  img-src 'self' blob: data: https:;
+  media-src 'self' https://*.s3.amazonaws.com;
+  connect-src 'self' analytics.umami.is us.umami.is;
   font-src 'self';
-  frame-src giscus.app
+  frame-src 'self' giscus.app;
+  object-src 'none';
+  base-uri 'self';
+  form-action 'self';
+  frame-ancestors 'none';
+  upgrade-insecure-requests;
 `
 
 const securityHeaders = [
@@ -55,10 +57,6 @@ const securityHeaders = [
     key: 'Permissions-Policy',
     value: 'camera=(), microphone=(), geolocation=()',
   },
-  {
-    key: 'Content-Security-Policy',
-    value: "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://us.umami.is;",
-  },
 ]
 
 const output = process.env.EXPORT ? 'export' : undefined
@@ -74,17 +72,13 @@ module.exports = () => {
     output,
     basePath,
     reactStrictMode: true,
+    poweredByHeader: false,
     pageExtensions: ['ts', 'tsx', 'js', 'jsx', 'md', 'mdx'],
     eslint: {
       dirs: ['app', 'components', 'layouts', 'scripts'],
     },
     images: {
-      remotePatterns: [
-        {
-          protocol: 'https',
-          hostname: 'picsum.photos',
-        },
-      ],
+      remotePatterns: [],
       unoptimized,
     },
     async headers() {
@@ -92,6 +86,16 @@ module.exports = () => {
         {
           source: '/(.*)',
           headers: securityHeaders,
+        },
+        {
+          // The resume page embeds this PDF in a same-origin iframe. Relax the
+          // frame-blocking headers for this one file only (last-match wins in
+          // Next.js); all other security headers from the catch-all still apply.
+          source: '/Kunj_Patel_Senior_Security_Engineer.pdf',
+          headers: [
+            { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+            { key: 'Content-Security-Policy', value: "frame-ancestors 'self'" },
+          ],
         },
       ]
     },
@@ -110,16 +114,6 @@ module.exports = () => {
           loader: 'raw-loader',
         },
       })
-      config.plugins.push(
-        new CopyPlugin({
-          patterns: [
-            {
-              from: require.resolve('pdfjs-dist/build/pdf.worker.min.js'),
-              to: path.join(__dirname, 'public/static/js'),
-            },
-          ],
-        })
-      )
 
       return config
     },

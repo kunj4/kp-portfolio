@@ -16,26 +16,24 @@
   },
   "dependencies": {
     "@headlessui/react": "1.7.19",
-    "@next/bundle-analyzer": "14.2.3",
+    "@next/bundle-analyzer": "15.5.19",
     "@tailwindcss/forms": "^0.5.7",
     "@tailwindcss/typography": "^0.5.12",
-    "@wojtekmaj/react-hooks": "^1.18.0",
     "autoprefixer": "^10.4.13",
-    "contentlayer2": "0.4.6",
+    "contentlayer2": "0.5.8",
     "esbuild": "0.25.0",
     "github-slugger": "^2.0.0",
     "gray-matter": "^4.0.2",
     "hast-util-from-html-isomorphic": "^2.0.0",
     "image-size": "1.0.0",
     "lucide-react": "^0.424.0",
-    "next": "14.2.26",
-    "next-contentlayer2": "0.4.6",
-    "next-themes": "^0.3.0",
-    "pliny": "0.2.1",
-    "postcss": "^8.4.24",
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "react-pdf": "^7.7.1",
+    "next": "15.5.19",
+    "next-contentlayer2": "0.5.8",
+    "next-themes": "^0.4.4",
+    "pliny": "0.4.1",
+    "postcss": "^8.4.31",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
     "react-rough-notation": "^1.0.5",
     "reading-time": "1.5.0",
     "rehype-autolink-headings": "^7.1.0",
@@ -54,13 +52,13 @@
   "devDependencies": {
     "@svgr/webpack": "^8.0.1",
     "@types/mdx": "^2.0.12",
-    "@types/react": "^18.2.73",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
     "@typescript-eslint/eslint-plugin": "^6.1.0",
     "@typescript-eslint/parser": "^6.1.0",
-    "copy-webpack-plugin": "^12.0.2",
     "cross-env": "^7.0.3",
     "eslint": "^8.45.0",
-    "eslint-config-next": "14.2.3",
+    "eslint-config-next": "15.5.19",
     "eslint-config-prettier": "^8.8.0",
     "eslint-plugin-prettier": "^5.0.0",
     "husky": "^9.0.0",
@@ -78,5 +76,10 @@
     "*.+(js|jsx|ts|tsx|json|css|md|mdx)": [
       "prettier --write"
     ]
+  },
+  "resolutions": {
+    "protobufjs": "^7.5.5",
+    "form-data": "^2.5.5",
+    "postcss": "^8.4.31"
   }
 }

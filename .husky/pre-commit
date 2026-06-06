@@ -1,1 +1,2 @@
+sh ./scripts/check-secrets.sh
 npx --no-install lint-staged
