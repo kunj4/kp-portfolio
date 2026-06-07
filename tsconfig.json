@@ -11,9 +11,7 @@
     "composite": true,
     "esModuleInterop": true,
     "module": "esnext",
-    // pliny ships a non-standard exports map ("./*": "./*") without a `types`
-    // condition, so `bundler`/`node16` resolution can't find its .d.ts files.
-    // Classic `node` resolution is required for it to type-check.
+    // Required by pliny (its exports map lacks a types condition for bundler/node16).
     "moduleResolution": "node",
     "resolveJsonModule": true,
     "isolatedModules": true,

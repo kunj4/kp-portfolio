@@ -1,8 +1,3 @@
-// Renders the resume PDF using the browser's built-in PDF viewer via an
-// iframe. This intentionally avoids react-pdf / pdfjs-dist, which carried
-// CVE-2024-4367 (arbitrary JS execution from a malicious PDF) and a heavy
-// native `canvas` dependency. The PDF is same-origin and trusted; framing is
-// permitted only same-origin (see frame-src / per-file headers in next.config.js).
 export default function Resume({ filename }: { filename: string }) {
   return (
     <div className="PDF__container">

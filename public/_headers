@@ -1,16 +1,6 @@
-# Cloudflare Pages security headers for the static export (`output: export`).
-# next.config.js `headers()` does NOT apply to statically exported sites, so
-# these are the production source of truth.
-#
-# FRAME PROTECTION IS NOT SET HERE. Cloudflare _headers APPENDS every matching
-# rule (it can't override `/*` for one path), so a `/*` X-Frame-Options would
-# also hit the resume PDF and block its same-origin iframe. Instead, frame
-# protection is applied via a Cloudflare Transform Rule:
-#   Set response header  X-Frame-Options: DENY
-#   When  (http.request.uri.path ne "/Kunj_Patel_Senior_Security_Engineer.pdf")
-# That gives every page DENY while leaving the resume PDF embeddable.
-# (Note: next.config.js still sets frame headers for local `next dev`/`start`,
-#  where Next.js *does* honor per-path overrides.)
+# Security headers for the Cloudflare static export (next.config.js headers()
+# don't apply to exports). X-Frame-Options is set via a Cloudflare Transform
+# Rule that excludes the resume PDF, so it can be embedded in /resume.
 
 /Kunj_Patel_Senior_Security_Engineer.pdf
   Cache-Control: public, max-age=300, must-revalidate

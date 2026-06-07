@@ -1,8 +1,7 @@
 import { MetadataRoute } from 'next'
 import siteMetadata from '@/data/siteMetadata'
 
-// Required for `output: export` (static hosting on Cloudflare): Next 15 no
-// longer treats metadata route handlers as static by default.
+// Required for static export (output: export).
 export const dynamic = 'force-static'
 
 export default function robots(): MetadataRoute.Robots {
