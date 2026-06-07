@@ -32,6 +32,9 @@ public/sitemap.xml
 # misc
 .DS_Store
 
+# typescript
+*.tsbuildinfo
+
 # debug
 *.log
 npm-debug.log*
