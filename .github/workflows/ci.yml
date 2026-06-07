@@ -1,9 +1,5 @@
 name: CI
 
-# Build + deploy are handled by Cloudflare (incl. PR preview builds, which run
-# `next build` and lint). This workflow covers what Cloudflare does not:
-# secret scanning and dependency auditing.
-
 on:
   push:
     branches: [main]
@@ -14,6 +10,28 @@ permissions:
   contents: read
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Lint
+        run: yarn lint
+
+      - name: Build
+        run: yarn build
+
   security:
     runs-on: ubuntu-latest
 
