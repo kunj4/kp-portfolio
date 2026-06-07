@@ -9,6 +9,7 @@
 # The resume page embeds this PDF in a same-origin iframe, so it must NOT be
 # X-Frame-Options: DENY. Self-contained so it's correct regardless of merge order.
 /Kunj_Patel_Senior_Security_Engineer.pdf
+  Cache-Control: public, max-age=300, must-revalidate
   X-Frame-Options: SAMEORIGIN
   Content-Security-Policy: frame-ancestors 'self'
   Referrer-Policy: strict-origin-when-cross-origin
@@ -17,7 +18,7 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=()
 
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline' giscus.app analytics.umami.is us.umami.is static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:; media-src 'self' https://*.s3.amazonaws.com; connect-src 'self' analytics.umami.is us.umami.is cloudflareinsights.com; font-src 'self'; frame-src 'self' giscus.app; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline' giscus.app analytics.umami.is us.umami.is cloud.umami.is static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:; media-src 'self' https://*.s3.amazonaws.com; connect-src 'self' analytics.umami.is us.umami.is cloud.umami.is cloudflareinsights.com; font-src 'self'; frame-src 'self' giscus.app; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
