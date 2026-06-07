@@ -2,6 +2,19 @@
 # next.config.js `headers()` does NOT apply to statically exported sites, so
 # these are the production source of truth. Keep them in sync with the
 # `securityHeaders` array in next.config.js (used for local `next dev`/`start`).
+#
+# IMPORTANT: Cloudflare applies the FIRST matching rule per header, so the
+# specific PDF rule MUST come before the `/*` catch-all to take effect.
+
+# The resume page embeds this PDF in a same-origin iframe, so it must NOT be
+# X-Frame-Options: DENY. Self-contained so it's correct regardless of merge order.
+/Kunj_Patel_Senior_Security_Engineer.pdf
+  X-Frame-Options: SAMEORIGIN
+  Content-Security-Policy: frame-ancestors 'self'
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
 
 /*
   Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline' giscus.app analytics.umami.is us.umami.is; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:; media-src 'self' https://*.s3.amazonaws.com; connect-src 'self' analytics.umami.is us.umami.is; font-src 'self'; frame-src 'self' giscus.app; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
@@ -11,9 +24,3 @@
   X-DNS-Prefetch-Control: on
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Permissions-Policy: camera=(), microphone=(), geolocation=()
-
-# The resume page embeds this PDF in a same-origin iframe. Relax the
-# frame-blocking headers for this one file only (more specific path wins).
-/Kunj_Patel_Senior_Security_Engineer.pdf
-  X-Frame-Options: SAMEORIGIN
-  Content-Security-Policy: frame-ancestors 'self'
