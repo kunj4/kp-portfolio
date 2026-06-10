@@ -1,0 +1,140 @@
+---
+title: "The Alert Enrichment Bot: Doing the Boring Part of Triage So Analysts Don't Have To"
+date: '2026-04-09'
+tags: ['Cybersecurity', 'Automation', 'Python', 'SOC', 'FastAPI', 'Okta']
+draft: false
+summary: 'A bot that intercepts SIEM alerts, auto-enriches them with IP reputation, user activity, and asset ownership, then drops a pre-triaged summary into Slack before a human ever opens the ticket.'
+images: ['/static/images/alert-enrichment-bot.png']
+authors: ['default']
+---
+
+Every analyst I've ever worked with spends the first five minutes of every alert doing the exact same thing: copy the IP, paste it into a reputation tool, pivot to the identity provider to see what the user's been up to, then go hunting for who actually owns the asset. It's not analysis. It's data entry with extra steps. So I automated it.
+
+![alert-enrichment-bot.png](/static/images/alert-enrichment-bot.png)
+
+### Why Bother Enriching Before a Human Looks?
+
+Because the context is always the same, and humans are bad at doing the same boring thing forty times a day without making a mistake.
+
+When a SIEM alert fires, the questions are predictable:
+
+- Is this IP known-bad, or is it just someone's home network?
+- What has this user been doing recently — is this in line with their normal behavior, or did they suddenly start doing something weird?
+- Who owns the asset that's involved, and should we be paging them?
+
+None of that requires judgment. It requires _fetching_. And fetching is exactly the kind of thing a computer should be doing while the analyst is still reaching for their coffee. The goal here isn't to replace triage — it's to make sure that when a human opens the alert, the boring lookups are already done and sitting right there in the channel.
+
+### The Stack
+
+The whole thing is a pipeline with three enrichment stops in the middle:
+
+- **SIEM** fires an alert and hits a webhook
+- A small **Python** service (I used **FastAPI**, because it's hard to beat for "I need an HTTP endpoint and I need it now") receives the payload
+- The service fans out to three enrichment sources: **IP exposure** (I used **Shodan**), **identity** (**Okta** — what the user's actually been doing), and **asset ownership** (our internal IT-ops inventory)
+- A tidy summary gets posted to the IR **Slack** channel
+
+That's it. No queue, no database, no sprawling microservice diagram. An alert comes in, three lookups happen, a message goes out.
+
+### Catching the Alert
+
+First we need somewhere for the SIEM to send its alerts. A webhook listener is about as simple as it gets.
+
+```python title="Webhook listener (FastAPI)"
+from fastapi import FastAPI, Request
+
+app = FastAPI()
+
+@app.post("/siem/alert")
+async def receive_alert(request: Request):
+    alert = await request.json()
+
+    # Pull the bits we actually care about out of the SIEM payload.
+    ip = alert.get("src_ip")
+    user = alert.get("username")
+    asset = alert.get("asset_id")
+
+    summary = enrich_alert(ip, user, asset)
+    post_to_slack(summary)
+
+    return {"status": "enriched"}
+```
+
+(In real life you'd want to validate that the request actually came from your SIEM and not from someone who found the endpoint. A shared secret header or signature check goes here. I'm leaving it out so the example stays readable, but please don't ship an open enrichment endpoint to the internet.)
+
+### The Enrichment Part
+
+This is the whole point. Three lookups, one summary. I kept each enrichment source behind its own function so that when one of them inevitably changes their API or goes down, I only have to fix one thing.
+
+```python title="Enrichment fan-out"
+def enrich_alert(ip, user, asset):
+    return {
+        "ip": ip,
+        "ip_reputation": lookup_ip_reputation(ip),
+        "user": user,
+        "user_activity": lookup_recent_activity(user),
+        "asset": asset,
+        "asset_owner": lookup_asset_owner(asset),
+    }
+```
+
+The individual lookups are deliberately boring — each one talks to whatever source of truth you've got. In my case: IP exposure goes to **Shodan**, recent user activity comes from **Okta's system log**, and asset ownership comes from our **internal IT-ops inventory** (Workspace ONE, for us — but use whatever actually knows who owns the box).
+
+```python title="IP lookup (Shodan)"
+import requests
+
+SHODAN_API_KEY = "REDACTED"
+
+def lookup_ip_reputation(ip):
+    if not ip:
+        return "no IP in alert"
+
+    resp = requests.get(
+        f"https://api.shodan.io/shodan/host/{ip}",
+        params={"key": SHODAN_API_KEY},
+        timeout=5,
+    )
+    if resp.status_code == 404:
+        return "no Shodan data (not internet-exposed)"
+
+    data = resp.json()
+    return {
+        "org": data.get("org"),            # who the IP belongs to
+        "open_ports": data.get("ports"),   # what it's exposing
+        "tags": data.get("tags"),          # e.g. "scanner", "cloud", "honeypot"
+        "vulns": list(data.get("vulns", []))[:5],
+    }
+```
+
+Shodan isn't open-source, but it's API-first and it tells you what an IP is actually _exposing_ — the hosting org, open ports, whether it's a known scanner, any CVEs hanging off it. If you'd rather stay fully open and free, the shape of this function doesn't change — just the URL and the fields you pull. **AbuseIPDB** (community abuse scores), **GreyNoise**'s community API ("is this just internet background noise?"), **AlienVault OTX**, and **abuse.ch** (ThreatFox / URLhaus) all hand back clean JSON you can drop straight in. Pick whichever answers the question your alerts actually raise.
+
+The other two lookups follow the exact same shape — call the source, pull out the two or three fields that matter, return something small. The trick is to resist the urge to dump the entire API response into Slack. Nobody triaging an alert at 2 a.m. wants to scroll through a 400-line JSON blob. Give them the verdict, the highlights, and a link to go deeper if they want it.
+
+### Posting the Summary to Slack
+
+The payload arrives, gets enriched, and then the bot does the one thing analysts actually see: it posts a clean summary to the IR **Slack** channel.
+
+```python title="Slack summary post"
+import requests
+
+SLACK_WEBHOOK = "https://hooks.slack.com/services/REDACTED"
+
+def post_to_slack(summary):
+    text = (
+        f"*New alert (pre-enriched)*\n"
+        f"• IP: `{summary['ip']}` — {summary['ip_reputation']}\n"
+        f"• User: `{summary['user']}` — {summary['user_activity']}\n"
+        f"• Asset: `{summary['asset']}` — owner: {summary['asset_owner']}"
+    )
+
+    requests.post(SLACK_WEBHOOK, json={"text": text}, timeout=5)
+```
+
+Now, instead of a bare alert that says "suspicious login, go figure it out," the analyst opens a message that already answers the three questions they were going to ask anyway. The IP's reputation is right there. The user's recent activity is right there. The asset owner is right there. They can make a call in seconds instead of spending the first chunk of the investigation just gathering context.
+
+### Why This Matters
+
+The win here isn't sophistication — there's nothing clever in this code, and that's sort of the point. The win is that the most repetitive, least-fun part of every single alert now happens automatically, before a human is even involved. Analysts get to spend their attention on the part that actually needs a brain.
+
+It's not a replacement for an analyst, and it's not making any decisions — it's a very fast intern who only knows how to look things up and write them down neatly. The enrichment is only as good as the sources behind it, so if your threat intel is stale or your asset inventory is a fiction, the bot will confidently hand you stale, fictional context. Garbage in, tidy garbage out.
+
+But for the cost of one small service and three API calls, every alert your team opens is already triaged. That's a trade I'll take every time. What's the most boring lookup _your_ analysts do on repeat — and why haven't you automated it yet?

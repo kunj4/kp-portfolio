@@ -8,6 +8,7 @@ import { fromHtmlIsomorphic } from 'hast-util-from-html-isomorphic'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import { remarkAlert } from 'remark-github-blockquote-alert'
+import remarkSmartypants from 'remark-smartypants'
 import {
   remarkExtractFrontmatter,
   remarkCodeTitles,
@@ -159,6 +160,8 @@ export default makeSource({
       remarkMath,
       remarkImgToJsx,
       remarkAlert,
+      // Curl straight quotes/dashes into proper typographic glyphs (skips code).
+      [remarkSmartypants, { dashes: 'oldschool' }],
     ],
     rehypePlugins: [
       rehypeSlug,

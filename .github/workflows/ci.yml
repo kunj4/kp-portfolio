@@ -3,6 +3,11 @@ name: CI
 # Build + deploy are handled by Cloudflare (incl. PR preview builds, which run
 # `next build` and lint). This workflow covers what Cloudflare does not:
 # secret scanning and dependency auditing.
+#
+# It deliberately uses ONLY GitHub-owned actions (checkout, setup-node) so it
+# runs under the strict "owner/GitHub actions only" Actions policy — the secret
+# scan is plain shell (same patterns as scripts/check-secrets.sh), no third-party
+# action required.
 
 on:
   push:
@@ -20,13 +25,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # gitleaks needs full history to scan all commits
 
-      - name: Secret scan (gitleaks)
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Secret scan (dependency-free)
+        run: |
+          set -eu
+          patterns='AKIA[0-9A-Z]{16}'
+          patterns="$patterns|-----BEGIN ([A-Z]+ )?PRIVATE KEY-----"
+          patterns="$patterns|gh[pousr]_[0-9A-Za-z]{36,}"
+          patterns="$patterns|github_pat_[0-9A-Za-z_]{22,}"
+          patterns="$patterns|xox[baprs]-[0-9A-Za-z-]{10,}"
+          patterns="$patterns|sk_live_[0-9A-Za-z]{20,}"
+          patterns="$patterns|AIza[0-9A-Za-z_-]{35}"
+          patterns="$patterns|eyJ[A-Za-z0-9_-]{8,}[.][A-Za-z0-9_-]{8,}[.][A-Za-z0-9_-]{8,}"
+          if git ls-files -z | xargs -0 grep -nIE "$patterns"; then
+            echo "::error::Potential secret detected in tracked files"
+            exit 1
+          fi
+          echo "No secrets found in tracked files."
 
       - name: Setup Node
         uses: actions/setup-node@v4

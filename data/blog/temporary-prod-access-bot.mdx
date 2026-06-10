@@ -1,0 +1,170 @@
+---
+title: 'A Slack Bot That Hands Out Prod Access (And Takes It Back Four Hours Later)'
+date: '2025-06-03'
+tags: ['Cybersecurity', 'Automation', 'Python', 'Slack', 'AWS', 'IAM']
+draft: false
+summary: 'A Slack bot for just-in-time, time-boxed production access via AWS IAM Identity Center: engineers request with a reason, I approve in one click, and a sweep over the grant records in MongoDB auto-expires the access after four hours.'
+images: ['/static/images/temporary-prod-access-bot.png']
+authors: ['default']
+---
+
+Production access at most companies works like a hotel keycard that never expires: someone needs it for one debugging session in 2023, and three years later they still have it. Nobody remembers why. Nobody wants to be the one who revokes it.
+
+![temporary-prod-access-bot.png](/static/images/temporary-prod-access-bot.png)
+
+So I built a Slack bot that hands out prod access on demand, routes the request to me for a one-click approval, and then quietly takes the access back four hours later whether anyone remembers to ask for it or not. The result is just-in-time, time-boxed, auditable prod access — and a lot fewer standing grants that exist purely because revoking them felt rude.
+
+### Why Standing Prod Access Is a Problem
+
+Standing access is the thing every auditor circles in red. It's also the thing every engineer quietly accumulates. Here's why it gets bad:
+
+- **Requests are ad hoc.** Someone DMs a manager, gets a thumbs-up emoji, and now they're an admin. No reason recorded, no expiry, no trail.
+- **Access outlives the need.** The grant was for one incident. The incident ended. The grant didn't.
+- **Nobody audits it.** Reviewing who has prod access is everyone's least favorite quarterly chore, so it happens roughly never.
+
+The fix isn't "stop giving people prod access" — engineers need prod sometimes, and pretending otherwise just gets you a pile of shared credentials in a Notion doc. The fix is to make access **temporary by default**. You get it when you ask, you justify it, and it goes away on its own.
+
+That last part is the whole point. **Auto-expiry is what makes this work.** Approval flows are easy; remembering to revoke is the hard part, so I made the bot do it.
+
+### The Request Flow: A Slash Command With a Reason
+
+The entry point is a Slack slash command. An engineer types something like `/prod-access "debugging the checkout 500s"` and the bot pops open a request that routes to me. The reason is mandatory — partly for the audit trail, partly because being forced to type out _why_ you need prod tends to filter out the "eh, might as well" requests.
+
+```python title="Slack slash command handler"
+from slack_bolt import App
+
+app = App(token=SLACK_BOT_TOKEN, signing_secret=SLACK_SIGNING_SECRET)
+
+@app.command("/prod-access")
+def handle_request(ack, command, client):
+    ack()  # Slack wants a response in 3 seconds or it sulks
+
+    requester = command["user_id"]
+    reason = command["text"].strip()
+
+    if not reason:
+        client.chat_postEphemeral(
+            channel=command["channel_id"],
+            user=requester,
+            text="You need to include a reason. 'Because I said so' does not count.",
+        )
+        return
+
+    # Route the request to the approver with interactive buttons
+    client.chat_postMessage(
+        channel=APPROVER_CHANNEL,
+        blocks=build_approval_message(requester, reason),
+    )
+```
+
+The reason gets carried through the whole flow so it lands in the approval message, the grant record, and the audit log. One string, three useful places.
+
+### One-Click Approval
+
+When a request comes in, I get a Slack message with the requester, their reason, and two buttons: **Approve** and **Deny**. No context-switching into a ticketing tool, no separate dashboard. The whole interaction lives where I already am.
+
+```python title="Interactive approval buttons"
+def build_approval_message(requester, reason):
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*<@{requester}>* is requesting temporary prod access.\n*Reason:* {reason}",
+            },
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Approve"},
+                    "style": "primary",
+                    "action_id": "approve_access",
+                    "value": requester,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Deny"},
+                    "style": "danger",
+                    "action_id": "deny_access",
+                    "value": requester,
+                },
+            ],
+        },
+    ]
+
+@app.action("approve_access")
+def approve(ack, body, client):
+    ack()
+    requester = body["actions"][0]["value"]
+    approver = body["user"]["id"]
+
+    grant_prod_access(requester)            # hand out the access
+    schedule_revocation(requester, hours=4) # ...and schedule taking it back
+
+    client.chat_update(
+        channel=body["channel"]["id"],
+        ts=body["message"]["ts"],
+        text=f"Approved by <@{approver}>. Access expires in 4 hours.",
+    )
+```
+
+The key line is `schedule_revocation`. Approval and expiry are set up in the same breath, so there's no path where access gets granted but the cleanup never gets scheduled. If you approve, the clock starts immediately.
+
+### Granting and Auto-Revoking
+
+The grant talks to **AWS IAM Identity Center**: approving assigns the requester a prod permission set, and revoking pulls that assignment back. Every grant also gets written to **MongoDB** with its expiry — which does double duty as the audit record _and_ the to-do list the revoker works from. The interesting design decision is the **time-box**: every grant carries a 4-hour TTL, and a scheduled sweep revokes anything past it.
+
+```python title="Grant with a 4-hour time-box (IAM Identity Center + MongoDB)"
+import datetime
+
+GRANT_TTL = datetime.timedelta(hours=4)
+
+def grant_prod_access(user_id):
+    expires_at = datetime.datetime.utcnow() + GRANT_TTL
+
+    # Assign the prod permission set in AWS IAM Identity Center
+    identity_center.assign_prod_permission_set(user_id)
+
+    # Record it in MongoDB — audit trail AND the revoker's to-do list
+    grants.insert_one({
+        "user": user_id,
+        "event": "prod_access_granted",
+        "expires_at": expires_at,
+        "revoked": False,
+    })
+    return expires_at
+
+def revoke_prod_access(user_id):
+    identity_center.remove_prod_permission_set(user_id)
+    grants.update_one(
+        {"user": user_id, "revoked": False},
+        {"$set": {"revoked": True, "revoked_at": datetime.datetime.utcnow()}},
+    )
+```
+
+There's no fragile in-memory timer holding the four hours — that wouldn't survive a redeploy. `schedule_revocation` just stamps the expiry in MongoDB, and a small sweep runs every few minutes, finds anything past its TTL, and revokes it. Lose a pod, redeploy, restart — doesn't matter; the source of truth is the grant record, not a process that has to stay alive.
+
+```python title="The revocation sweep (runs on a short interval)"
+def sweep_expired_grants():
+    now = datetime.datetime.utcnow()
+    for grant in grants.find({"revoked": False, "expires_at": {"$lte": now}}):
+        revoke_prod_access(grant["user"])
+```
+
+The revocation runs whether or not the engineer is still using the access. That's intentional and occasionally annoying: if you're mid-incident at the four-hour mark, your access evaporates and you have to ask again. I decided that's the correct tradeoff — re-requesting is a 10-second Slack interaction, and "access that never expires because someone was busy" is exactly the failure mode I was trying to kill.
+
+### Why This Matters
+
+Every grant now has three properties it didn't before: a **reason**, an **approver**, and an **expiry**. That's the entire audit story handed to you for free. When someone asks "who had prod access last Tuesday and why," the answer is a query against the audit log instead of a forensic archaeology project across Slack DMs.
+
+The business value is boring in the best way:
+
+- **Least privilege, actually enforced.** Access exists only while it's needed, not indefinitely.
+- **A clean audit trail.** Who, why, when granted, when revoked — all recorded.
+- **Less reviewer fatigue.** Approvals are one click in a tool I'm already in, so they don't pile up.
+
+Honest limitations: this isn't a full PAM platform. There's no break-glass path for the case where the approver is asleep and prod is on fire (right now that's still a manual page). The four-hour window is a flat default — some tasks genuinely need longer, and a smarter version would let approvers pick a duration. And the whole thing assumes a single approver funnel, which doesn't scale past a small team without an on-call rotation behind it.
+
+But for the original problem — prod access that was ad hoc, sticky, and unauditable — a Slack bot that grants on request and revokes on a timer covers a surprising amount of ground. What's the oldest standing prod grant in _your_ environment, and do you even remember why it exists?

@@ -1,0 +1,73 @@
+---
+title: 'The ROI of Security: In-House vs. vCISO vs. “We Handle That For You”'
+date: '2026-05-27'
+tags: ['Cybersecurity', 'Vendor Risk', 'Risk Management', 'vCISO']
+draft: false
+summary: 'Why an in-house security owner beats monitoring-only services no matter the size of the business, the plain-language questions every CEO should be able to answer about their own risk, and why capable AI agents are about to put every small business in the crosshairs.'
+images: ['/static/images/security-roi-in-house-vs-vciso.png']
+authors: ['default']
+---
+
+Every few months a leadership deck lands in my inbox proposing that we "outsource security" to save money — slide 4 is always a cost comparison, slide 5 is always a logo wall — and every time I have to gently explain that the spreadsheet math and the security math are not the same math.
+
+![security-roi-in-house-vs-vciso.png](/static/images/security-roi-in-house-vs-vciso.png)
+
+### Security gets judged like a cost center
+
+Security doesn't generate revenue, so it gets evaluated like a cost center, and cost centers get optimized toward the lowest invoice. That's how a full-time hire "loses" to a vendor quote: the number is smaller.
+
+But ROI on security isn't _cost avoided this quarter_ — it's _risk reduced over time, weighted by how badly that risk would hurt your specific business_. The return is mostly invisible: the breach that didn't happen, the misconfiguration caught before it shipped, the phishing campaign that died in triage. You can't put a crisp dollar figure on an event that never occurred, so it gets valued at roughly zero next to a real, recurring invoice. That asymmetry is the whole trap.
+
+### Monitoring watches you. A person matures you.
+
+Here's the question I'd put to any founder who's actually serious about the business: why would you pay, month after month, for a service that only _watches_ — when for comparable money you can hire someone who watches **and makes the organization stronger every quarter they're there?**
+
+A monitoring-only engagement is a smoke detector. Useful, but it does exactly one thing, forever, and the building never gets less flammable. An in-house security person is a smoke detector who _also_ rewires the bad outlets, writes the evacuation plan, trains the staff, and notices the space heater nobody mentioned. Similar monthly cost, wildly different trajectory — one is a flat line, the other compounds.
+
+That's the part the spreadsheet can't see. And the three ways to staff "someone owns security" aren't really substitutes; they're different things:
+
+- **In-house** buys _context and ownership_ — someone who sits in your standups, knows which service is held together with duct tape, and feels it personally when something breaks.
+- **A vCISO** buys _seniority, part-time_ — strategy, governance, audit prep, and judgment, distributed across however many other clients they have that week. A force multiplier, not a full-timer.
+- **A managed SOC / "we handle it"** buys _capacity_ — 24/7 eyes on logs, patching, the operational grind. The most commoditized layer, which is exactly why its invoice looks the smallest.
+
+No business is too small for this to matter. If you're serious about the company, the in-house seat is the one that pays back with interest, because it's the only one whose job is to make _you_ mature — not to keep a contract satisfied.
+
+### Can your CEO answer these? If not, your vendor isn't doing their job.
+
+You don't have to be technical to know whether your security is real. You need to be able to answer — or instantly name who can — a handful of plain-language questions. They map to the domains every business has to prioritize, in roughly this order:
+
+- **Crown jewels:** What data or systems, if leaked or lost, would actually hurt us — and where do they live?
+- **Access:** Who can reach them, and how fast can we cut someone off?
+- **Third parties:** Which vendors can touch our data, and what happens to _us_ if one of _them_ gets breached?
+- **Detection & response:** If we got hit right now, who's the first call, and how long until we're running again?
+- **The most likely door:** What's the single thing we're most likely to get breached through — and what are we actively doing about it?
+
+If your in-house officer can rattle these off, good. If your vCISO or your "security vendor" can't get _you_ to confident answers in five minutes, that's not a you problem — it's a sign they're managing a checklist instead of communicating risk. The entire point of paying for security leadership is that the person at the top understands their own exposure. If they don't, you're buying paperwork.
+
+### The part you genuinely can't outsource
+
+Two activities expose the gap more than anything else: **risk modeling** and **threat hunting** — the highest-leverage work a security function does, and the hardest to send outside, for the same reason. Both require knowing what _you_ are.
+
+Risk modeling is ranking "what would actually hurt us, how badly, and how likely." The crown jewels of a healthcare startup, a payments processor, and an ad-tech firm are completely different assets with completely different worst-case days. Without that context, a model defaults to a generic checklist — and a checklist optimizes for _coverage_, not for the one catastrophic thing that would end your company.
+
+Threat hunting is the proactive version: going looking for the adversary by spotting the deviation from _normal_ that no rule was written for. "Normal" isn't a product you can buy. It's accumulated familiarity — which services talk to which, who logs in from where, what a healthy deploy looks like. Outsource the coverage and the compliance all you want; the moment someone proposes outsourcing the _thinking_, get nervous.
+
+### And the barrier just dropped through the floor
+
+Here's why this stopped being a big-company conversation. For years, small and mid-size businesses survived on obscurity — too small to be worth an attacker's time. That economics is collapsing. Capable AI agents and coding models can now run reconnaissance, write working exploits, and chain an intrusion end-to-end at a speed and scale that used to require a skilled human. The thing that protected the long tail of SMBs — _attacker effort_ — is being automated away.
+
+So the script kiddie and the financially-motivated crew now get the same force multiplier you do, and suddenly every small and mid-size business is fair game, because the cost of attacking them just dropped below the payoff. Generic, outsourced, checkbox coverage is exactly the wrong defense against a tailored, AI-accelerated attack on _your specific_ environment. The thing that catches that is someone who knows your normal cold — which is, once again, the in-house seat.
+
+### So what actually maximizes ROI
+
+My honest take: the best ROI is rarely "pick one model." It's keeping the _thinking_ inside and renting the _capacity_ outside.
+
+- **Keep ownership and context in-house.** Even one person who genuinely owns it beats a large contract that satisfies the framework but doesn't know you. Ownership is the thing you cannot rent.
+- **Use a vCISO as a force multiplier**, not a replacement for the context layer.
+- **Outsource the commoditized grind** — 24/7 SOC, patching, the night shift — on purpose, eyes open about what it can and can't see.
+
+I'll cop to the limitation: I'm a security person, not a CFO. I've worked this field from just about every seat — intern, analyst, engineer, architect, manager — across both the SecOps grind and the GRC paperwork, just never the one signing the checks. Some orgs genuinely can't fund a dedicated hire yet. Fine — but even then, _someone_ internal has to own the relationship and supply the context, or you're paying to monitor a business nobody on the security side actually understands.
+
+So the question I'd leave you with isn't "in-house or outsourced?" It's: **who, specifically, understands your business well enough to know what would actually hurt it — and are they on your side of the table?** If you can't name that person, no invoice is going to fix it.
+
+As for which side of the table I sit on — I'll let the rest of this blog make that case for me.

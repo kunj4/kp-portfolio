@@ -1,0 +1,147 @@
+---
+title: 'The IAM Key-Rotation Nag Bot: Because Nobody Wants to Be the Cop'
+date: '2025-09-08'
+tags: ['Cybersecurity', 'Automation', 'Python', 'AWS', 'Lambda', 'Slack', 'IAM']
+draft: false
+summary: 'A serverless Lambda that scans every IAM user across an AWS org for access keys older than 90 days and quietly nags the owner in Slack to rotate them — so no human has to chase people.'
+images: ['/static/images/iam-access-key-rotation.png']
+authors: ['default']
+---
+
+Long-lived IAM access keys are like that gym membership you forgot to cancel: technically still active, slowly costing you, and nobody's paying attention until it bites. Across an org they pile up — keys from 2022, keys from contractors who left, keys nobody remembers creating. So I built a bot to do the nagging for me.
+
+![iam-access-key-rotation.png](/static/images/iam-access-key-rotation.png)
+
+### Why Stale Keys Are a Problem (and Why Humans Won't Fix It)
+
+Access keys are static, long-lived credentials — an access key ID and a secret, the AWS equivalent of a username and password that never times out. Unlike a session token that expires in an hour, an access key works until someone explicitly disables or deletes it. That's great for convenience and terrible for security:
+
+- A leaked key in a git commit from two years ago still works.
+- A contractor who offboarded last spring might still have a valid key in a `.env` somewhere.
+- The older a key is, the more places it's been copy-pasted into.
+
+The fix is boring: rotate keys regularly. The problem is also boring: **nobody wants to be the person chasing engineers to rotate their keys.** It's a thankless, repetitive task that's perfect for automation. So instead of a human playing credential cop, I wrote a Lambda that checks every IAM user across all accounts for keys older than 90 days and pings the owner in Slack.
+
+Nothing exotic in the stack, either — this is deliberately the cheapest, lowest-maintenance setup I could get away with:
+
+- **Python** + **boto3** for the AWS API calls.
+- **AWS Lambda** to run the check (no servers to babysit).
+- **EventBridge** on a daily schedule to trigger it.
+- **Assume-role across the org** so one Lambda can walk every account.
+- **Slack** for the actual nagging.
+
+The whole thing is serverless, runs once a day, and costs roughly the price of nothing.
+
+### Walking Every Account in the Org
+
+The first piece is iterating across accounts. The Lambda lives in a central account and assumes a read-only-ish role in each member account to enumerate IAM users and their keys.
+
+```python title="Assume role into a member account"
+import boto3
+
+def assume_into_account(account_id, role_name="KeyRotationAuditRole"):
+    sts = boto3.client("sts")
+    creds = sts.assume_role(
+        RoleArn=f"arn:aws:iam::{account_id}:role/{role_name}",
+        RoleSessionName="key-rotation-nag",
+    )["Credentials"]
+
+    # Hand the temporary creds to a fresh IAM client for that account.
+    return boto3.client(
+        "iam",
+        aws_access_key_id=creds["AccessKeyId"],
+        aws_secret_access_key=creds["SecretAccessKey"],
+        aws_session_token=creds["SessionToken"],
+    )
+```
+
+(You'll want that `KeyRotationAuditRole` deployed in every account with a trust policy back to the central account. The account list itself comes straight from the **AWS Organizations** API — `organizations:ListAccounts` walks every account in the org, so there's nothing to hardcode or keep in sync as accounts come and go.)
+
+### Finding the Geriatric Keys
+
+Once we have an IAM client for an account, we list every user, list each user's access keys, and check the age. boto3 hands you the key's `CreateDate` as a timezone-aware datetime, so the math is mercifully simple.
+
+```python title="Find access keys older than 90 days"
+from datetime import datetime, timezone
+
+MAX_KEY_AGE_DAYS = 90
+
+def find_stale_keys(iam):
+    stale = []
+    paginator = iam.get_paginator("list_users")
+
+    for page in paginator.paginate():
+        for user in page["Users"]:
+            username = user["UserName"]
+            keys = iam.list_access_keys(UserName=username)["AccessKeyMetadata"]
+
+            for key in keys:
+                age_days = (datetime.now(timezone.utc) - key["CreateDate"]).days
+                if age_days > MAX_KEY_AGE_DAYS:
+                    stale.append({
+                        "user": username,
+                        "key_id": key["AccessKeyId"],
+                        "age_days": age_days,
+                    })
+    return stale
+```
+
+This is intentionally dumb: it flags _any_ key older than the threshold, active or not. (A more nuanced version would skip `Inactive` keys, or cross-reference last-used data via `get_access_key_last_used` — see the open questions at the bottom for what I haven't pinned down yet.) Worth noting: `list_users` won't surface IAM _roles_ or the root account's keys, so this is strictly a long-lived-human-key problem. That's by design — roles hand out temporary credentials, which is the whole point of preferring them. The static keys are the ones that rot.
+
+### Nagging the Owner in Slack
+
+Finding stale keys is easy. The actual value is closing the loop — telling a _specific human_ their key is old without a security engineer typing the message. The tricky part is mapping an IAM username to a Slack person. The cleanest approach I've found is matching on email (assuming your IAM usernames are emails, or you tag users with one), then resolving that to a Slack user ID.
+
+```python title="Send the rotation nag to Slack"
+import os
+import urllib.request
+import json
+
+SLACK_WEBHOOK_URL = os.environ["SLACK_WEBHOOK_URL"]
+
+def nag(stale_key):
+    text = (
+        f":key: Hey — your AWS access key `{stale_key['key_id']}` "
+        f"(user `{stale_key['user']}`) is *{stale_key['age_days']} days old*. "
+        f"Time to rotate it. Old keys are how breaches happen on a Tuesday."
+    )
+    payload = json.dumps({"text": text}).encode("utf-8")
+
+    req = urllib.request.Request(
+        SLACK_WEBHOOK_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    urllib.request.urlopen(req)
+```
+
+I used a plain webhook here to keep dependencies at zero (no `slack_sdk`, no extra Lambda layer). If you want to DM individuals instead of blasting a channel, you'll need a bot token and the `chat.postMessage` API — but the webhook-to-a-channel version is the fastest way to get something live and start embarrassing people gently.
+
+### Wiring It Together with EventBridge
+
+The handler stitches the pieces: walk accounts, find stale keys, nag. EventBridge fires it once a day on a cron schedule and that's the entire operational footprint.
+
+```python title="Lambda entrypoint"
+def handler(event, context):
+    accounts = list_org_accounts()  # AWS Organizations: organizations:ListAccounts
+    all_stale = []
+
+    for account_id in accounts:
+        iam = assume_into_account(account_id)
+        all_stale.extend(find_stale_keys(iam))
+
+    for stale_key in all_stale:
+        nag(stale_key)
+
+    return {"stale_keys_found": len(all_stale)}
+```
+
+Point an EventBridge rule at this with a daily `cron(0 14 * * ? *)` expression (2 PM UTC — pick a time when people are actually online to see the nag) and you're done.
+
+### Why This Matters
+
+Key rotation is one of those controls that's trivially correct on paper and chronically ignored in practice, because the bottleneck was never _knowing_ which keys were stale — it was the social friction of chasing people. Moving that nag to a daily, automated, slightly-snarky Slack ping takes the human out of the enforcement loop entirely. The bot doesn't get tired, doesn't feel awkward, and doesn't forget.
+
+It's also honestly pretty limited as-is. It nags, but it doesn't _enforce_ — a sufficiently stubborn engineer can ignore Slack forever. The natural next step is escalation: after N days of nagging, deactivate the key automatically (terrifying, but effective), or route to a manager. I haven't built that yet, mostly because auto-disabling someone's prod credentials at 2 PM on a Friday is a great way to learn new things about your incident process.
+
+How aggressive would you go — gentle nags forever, or hard cutoff after a grace period?
