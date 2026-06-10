@@ -1,9 +1,9 @@
 ---
 title: 'Detonate First, Ask Questions Never: Auto-Quarantining Phishing URLs'
 date: '2025-12-19'
-tags: ['Cybersecurity', 'Phishing', 'Automation', 'Python', 'SOC', 'Open-Source']
+tags: ['Cybersecurity', 'Phishing', 'Gmail Add-On', 'Automation', 'Python', 'SOC', 'Open-Source']
 draft: false
-summary: 'A pipeline that detonates suspicious URLs from reported phishing emails in a sandbox, reads the verdict, and auto-quarantines malicious mail through the Gmail API before users get a chance to click.'
+summary: 'A pipeline that picks up the emails users report through my Gmail phishing add-on, detonates their URLs in a sandbox, reads the verdict, and auto-quarantines malicious mail before anyone gets a chance to click.'
 images: ['/static/images/phishing-url-detonation.png']
 authors: ['default']
 ---
@@ -12,7 +12,7 @@ Every reported phishing email used to land on someone's desk with the same unspo
 
 ![phishing-url-detonation.png](/static/images/phishing-url-detonation.png)
 
-So I built a pipeline that does the poking for me. It takes URLs out of reported phishing emails, detonates them in a sandbox, reads the verdict, and if the thing is malicious it pulls the message out of inboxes automatically. Less manual triage, faster containment, and one fewer reason for an analyst to sigh audibly.
+I'd already built a [Gmail add-on](/blog/gmail-addon-phishing-reporter) that lets users report a suspicious email with one click — it captures the message and ships it off for analysis. This pipeline is what happens _next_: it takes the URLs out of those reported emails, detonates them in a sandbox, reads the verdict, and if the thing is malicious it pulls the message out of inboxes automatically. Less manual triage, faster containment, and one fewer reason for an analyst to sigh audibly.
 
 ### The Problem: Manual Triage Doesn't Scale (and Neither Does Patience)
 
@@ -28,45 +28,44 @@ The goal of this project was narrow on purpose:
 
 No grand SOAR platform. Just the most painful manual step, automated.
 
-### The Stack: Gmail API Meets a Detonation Sandbox
+### The Stack: A Reported Email Meets a Detonation Sandbox
 
-Two pieces do the heavy lifting here. The **Gmail API** is how I get at reported emails and, crucially, how I take action on them — finding the message, reading its contents, and removing it from inboxes when the verdict comes back bad. The second piece is the **detonation sandbox** that opens the suspicious link in an isolated environment and tells me whether it's hostile. I used **Proofpoint** for detonation (it was already in our stack), but the pipeline doesn't care which engine sits there — it just needs a verdict back. If you'd rather stay open-source, **urlscan.io** has a free API that's excellent for URLs specifically, and **Cuckoo** / **CAPE Sandbox** are the open-source heavyweights if you want to run detonation yourself.
+Two pieces do the heavy lifting here. The first is the [Gmail add-on](/blog/gmail-addon-phishing-reporter) I already had: when a user reports a suspicious email, the add-on packages it up — subject, sender, body — and drops it onto a webhook. So I never poll inboxes or run the Gmail API on a timer hunting for reports; the reports come _to me_, already structured, the moment a human flags one. The second piece is the **detonation sandbox** that opens the suspicious link in an isolated environment and tells me whether it's hostile. I used **Proofpoint** for detonation (it was already in our stack), but the pipeline doesn't care which engine sits there — it just needs a verdict back. If you'd rather stay open-source, **urlscan.io** has a free API that's excellent for URLs specifically, and **Cuckoo** / **CAPE Sandbox** are the open-source heavyweights if you want to run detonation yourself.
 
-The mental model is a relay race. Gmail hands the URL to the sandbox. The sandbox runs it somewhere safe and hands back a verdict. Gmail takes that verdict and does something about it. My code is just the baton being passed between them.
+The mental model is a relay race. The add-on hands me a reported email. I pull the URLs and hand them to the sandbox. The sandbox runs them somewhere safe and hands back a verdict. My code takes that verdict and does something about it — just the baton being passed down the line.
 
 ```python title="Pipeline skeleton"
-def process_reported_email(message_id):
-    # 1. Pull the email and extract candidate URLs
-    email = gmail.get_message(message_id)
-    urls = extract_urls(email)
+def process_report(report):
+    # 'report' is the JSON the Gmail add-on captured: subject, sender, body, message_id
+    urls = extract_urls(report)
 
-    # 2. Detonate each URL and act on the worst verdict
+    # Detonate each URL and act on the worst verdict
     for url in urls:
         verdict = sandbox.detonate(url)
 
         if verdict == "threat":
-            quarantine(message_id)        # clear malicious -> pull it now
-            return                        # one bad URL is enough
+            quarantine(report["message_id"])   # clear malicious -> pull it now
+            return                              # one bad URL is enough
         if verdict in ("manual_review", "manual_review_likely_benign"):
-            route_to_analyst(message_id, verdict)   # ambiguous -> a human decides
+            route_to_analyst(report["message_id"], verdict)   # ambiguous -> a human decides
             return
     # "unlikely_threat" on everything -> leave the message alone
 ```
 
-That's the entire thing in spirit. The rest of this post is just filling in the three boxes with slightly more honest code.
+That's the entire thing in spirit. The rest of this post is just filling in the boxes with slightly more honest code.
 
-### Extracting URLs From the Email
+### Extracting URLs From the Reported Email
 
-Before you can detonate anything you have to find the links, and phishing emails are not known for their tidy HTML. Links hide in anchor tags, in plain text, in tracking redirects, and occasionally in places that make you question the sender's life choices.
+Before you can detonate anything you have to find the links, and phishing emails are not known for their tidy HTML. The add-on already handed me the email body; the job now is digging the links out of it — and they hide in anchor tags, in plain text, in tracking redirects, and occasionally in places that make you question the sender's life choices.
 
-```python title="URL extraction from a Gmail message"
+```python title="URL extraction from the reported email"
 import re
 
 URL_PATTERN = re.compile(r"https?://[^\s\"'<>)]+")
 
-def extract_urls(email):
-    """Pull URLs out of both the HTML and plain-text parts."""
-    body = email.get("body_html", "") + "\n" + email.get("body_text", "")
+def extract_urls(report):
+    """Pull URLs out of the email body the add-on captured."""
+    body = report.get("body", "")
     urls = set(URL_PATTERN.findall(body))
 
     # Drop obvious noise (unsubscribe links, image trackers, etc.)
@@ -106,14 +105,14 @@ The verdict isn't a yes/no — and that nuance is what makes it safe to automate
 
 The whole point of those middle two is that the bot only _takes irreversible action_ (yanking mail) when the verdict is unambiguous. Anything murky gets handed to a person — which is exactly where the judgment should live.
 
-### Pulling the Message: Auto-Quarantine via Gmail
+### Acting on the Verdict: Quarantine and Escalate
 
-When a verdict comes back malicious, the payoff is removing the message from inboxes before anyone clicks. This is the whole reason the project exists — the detonation is just the evidence-gathering; the quarantine is the arrest.
+When the verdict is `threat`, the response is the same containment the add-on's pipeline already escalates to for malicious mail — pull the message out of every inbox before anyone clicks, and flag it for the SOC. The detonation is just the evidence-gathering; this is the arrest.
 
 ```python title="Quarantine a malicious message"
 def quarantine(message_id):
-    """Remove a malicious message from the inbox via the Gmail API."""
-    gmail.modify_message(
+    """Pull a malicious message out of every inbox and flag it for SOC review."""
+    workspace.modify_message(
         message_id,
         add_labels=["QUARANTINE"],
         remove_labels=["INBOX"],
@@ -132,7 +131,7 @@ That said, I'm not going to pretend this is bulletproof:
 - **URL extraction is regex-based**, so cleverly obfuscated links can slip past it, and it can occasionally grab the wrong link.
 - **It leans on the sandbox's verdict** — a false `threat` quarantines a legitimate email, and a false `unlikely_threat` lets a bad one survive. The `manual_review` tiers blunt this (anything ambiguous goes to a human), but a confidently _wrong_ verdict still acts on its own.
 - **Polling has limits.** A sandbox that's slow or down stalls the verdict, and the email stays put until it answers.
-- **It only acts on what gets reported.** Phishing nobody flags never enters the pipeline.
+- **It only sees what users report.** The pipeline starts at the [add-on](/blog/gmail-addon-phishing-reporter), so phishing nobody clicks "report" on never enters it — this is containment for _reported_ mail, not a detection net.
 
 For the volume of lazy, obvious phishing that floods a help desk, though, this clears out the bulk of it without a human lifting a finger — which frees up the analysts for the genuinely weird stuff that actually needs a brain.
 
