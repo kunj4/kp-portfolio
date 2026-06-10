@@ -1,0 +1,152 @@
+---
+title: 'Automated Offboarding: Revoking Access Before the Laptop Even Ships Back'
+date: '2025-07-15'
+tags: ['Cybersecurity', 'Automation', 'Python', 'Okta', 'Jira', 'Workday']
+draft: false
+summary: 'How I wired Workday terminations into an automated workflow that deactivates the user in Okta — cascading deprovisioning to every connected app — strips group memberships, and files a Jira deprovisioning ticket with a full audit trail.'
+images: ['/static/images/automated-offboarding.png']
+authors: ['default']
+---
+
+Manual offboarding is the security task everyone agrees is important and nobody wants to own. Someone leaves, a ticket gets filed, and three days later their Okta account is still happily authenticating into half a dozen apps while their badge sits in a drawer.
+
+![automated-offboarding.png](/static/images/automated-offboarding.png)
+
+So I automated it. When someone's marked terminated in **Workday**, a workflow kicks off that deactivates their Okta account, yanks them out of every group, lets Okta cascade that deactivation to every connected app, and files a deprovisioning ticket with an audit trail attached. No more "who was supposed to handle that?" Slack threads at 6pm on a Friday. Here's how it fits together.
+
+### Why Bother Automating This?
+
+Because manual offboarding fails in two extremely predictable ways:
+
+- **Access lingers.** The longer an account stays active after someone leaves, the bigger the window for trouble — disgruntled exits, forgotten contractor accounts, credentials that quietly outlive the person who owned them.
+- **There's no paper trail.** When an auditor asks "prove this person lost access on their termination date," you do not want the answer to be "well, someone probably handled it." You want a timestamp.
+
+Automation fixes both. Access disappears fast, and every action leaves a record you can point at later. The boring parts (the parts humans skip when they're busy) happen every single time, the same way, whether it's a Tuesday morning or the Friday before a long weekend.
+
+There's a quieter benefit too: it takes the emotional weight out of the task. Offboarding is sometimes the messy, awkward kind — someone got walked out, and the last thing you want is a human pausing to wonder whether they're allowed to pull the plug. A script doesn't hesitate. It just does the thing the policy already said to do.
+
+### The Setup
+
+The whole thing is held together with **Python**, the **Okta API**, and **Jira**, and it hangs off one source of truth: **Workday**. Nothing exotic:
+
+- **Workday** is the trigger — when HR marks someone terminated there, that's the signal that fires everything else.
+- The **Okta API** deactivates the user and strips group memberships. Because Okta is our identity master, deactivating there cascades downstream: every app Okta provisions gets the user deprovisioned automatically. I don't call each SaaS app one by one — I pull the Okta thread and the connected apps unravel with it.
+- **Jira** files a deprovisioning ticket that doubles as the audit trail.
+
+The flow is linear and honestly kind of satisfying: Workday termination in → Okta deactivated (and the apps behind it with it) → ticket out.
+
+### Revoking Okta Access
+
+The first job is to make the account stop working. Okta makes this straightforward once you have the user's ID — deactivating a user kills their sessions and blocks future authentication in one move.
+
+```python title="Deactivate the departing user in Okta"
+import requests
+
+OKTA_DOMAIN = "https://yourorg.okta.com"
+OKTA_TOKEN = "REPLACE_ME"  # use an env var / secrets manager in real life, please
+
+HEADERS = {
+    "Authorization": f"SSWS {OKTA_TOKEN}",
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+}
+
+
+def deactivate_user(user_id: str) -> None:
+    """Deactivate an Okta user, killing sessions and blocking new logins."""
+    url = f"{OKTA_DOMAIN}/api/v1/users/{user_id}/lifecycle/deactivate"
+    resp = requests.post(url, headers=HEADERS, timeout=30)
+    resp.raise_for_status()
+    print(f"Deactivated {user_id}")
+```
+
+(Yes, the token is hardcoded in the snippet. No, you should not do that. Pull it from a secrets manager. This is a blog post, not a code review.)
+
+One thing worth calling out: in Okta, the deactivate call is a `lifecycle` transition, not a delete. The user record sticks around in a `DEPROVISIONED` state — which is exactly what you want for an audit. You're not erasing the person, you're flipping them off. The history stays intact, the sessions die, and any future login attempt bounces. Deleting outright would technically work, but then you've also nuked the evidence that the account ever existed, which tends to make auditors twitchy.
+
+### Stripping Group Memberships
+
+Deactivating the account is the headline, but group membership is the part that bites you later. Groups often drive downstream access — app assignments, distribution lists, the works. If you only deactivate and someone reactivates the account down the line (it happens), all that group-based access comes roaring back. So I remove the user from every group they belong to, explicitly.
+
+```python title="Remove the user from all Okta groups"
+def remove_from_all_groups(user_id: str) -> list[str]:
+    """Pull the user out of every group they belong to. Returns group IDs removed."""
+    groups_url = f"{OKTA_DOMAIN}/api/v1/users/{user_id}/groups"
+    resp = requests.get(groups_url, headers=HEADERS, timeout=30)
+    resp.raise_for_status()
+
+    removed = []
+    for group in resp.json():
+        group_id = group["id"]
+        remove_url = (
+            f"{OKTA_DOMAIN}/api/v1/groups/{group_id}/users/{user_id}"
+        )
+        r = requests.delete(remove_url, headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        removed.append(group_id)
+
+    return removed
+```
+
+Removing the membership instead of just deactivating means that even if the account comes back from the dead, it comes back naked — no groups, no inherited access. The audit trail thanks you.
+
+### Filing the Deprovisioning Ticket (a.k.a. the Audit Trail)
+
+Revoking access is good. Being able to _prove_ you revoked access is what keeps audits short. Every offboarding run files a Jira ticket capturing who, when, and what was removed — that ticket is the artifact you hand to an auditor instead of a shrug.
+
+```python title="File a deprovisioning ticket in Jira"
+JIRA_DOMAIN = "https://yourorg.atlassian.net"
+JIRA_AUTH = ("svc-account@yourorg.com", "REPLACE_ME")  # API token
+
+
+def file_deprovisioning_ticket(user_id: str, removed_groups: list[str]) -> str:
+    """Create a Jira ticket documenting the offboarding actions."""
+    description = (
+        f"Automated offboarding for Okta user {user_id}.\n"
+        f"- Account deactivated\n"
+        f"- Removed from {len(removed_groups)} group(s): "
+        f"{', '.join(removed_groups) or 'none'}"
+    )
+    payload = {
+        "fields": {
+            "project": {"key": "SEC"},
+            "summary": f"Deprovisioning: {user_id}",
+            "description": description,
+            "issuetype": {"name": "Task"},
+        }
+    }
+    resp = requests.post(
+        f"{JIRA_DOMAIN}/rest/api/2/issue",
+        json=payload,
+        auth=JIRA_AUTH,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()["key"]
+```
+
+### Tying It Together
+
+With the pieces in place, the orchestration is almost anticlimactic — which is exactly the point. When HR marks someone terminated, this runs end to end.
+
+```python title="The offboarding workflow"
+def offboard(user_id: str) -> None:
+    removed = remove_from_all_groups(user_id)
+    deactivate_user(user_id)
+    ticket = file_deprovisioning_ticket(user_id, removed)
+    print(f"Offboarding complete for {user_id}. Audit ticket: {ticket}")
+```
+
+I strip groups _before_ deactivating so the group-removal calls run against a live account — less chance of an ordering surprise with the API. Then deactivate. Then document. Termination event in, access gone, ticket out.
+
+The ordering matters more than it looks. If you deactivate first and _then_ try to walk the groups, you're now making API calls against an account that's mid-transition, and you're at the mercy of whatever Okta decides that means today. Doing the reversible, fiddly work while the account is still healthy — then dropping the hammer last — keeps the failure modes boring and predictable. Boring is the goal. Boring is what survives an audit.
+
+What this snippet quietly skips is error handling, and that's on purpose for readability. In the real version, each step needs to be able to fail loudly without silently leaving someone half-offboarded — the genuinely dangerous state, where the account looks handled but isn't. A user who's deactivated but still in groups, or stripped from groups but still logging in, is worse than one nobody's touched yet, because it _looks_ done. So the production flavor wraps each call, logs what happened, and makes sure the Jira ticket reflects reality even when reality includes a failure.
+
+### Why This Matters
+
+Offboarding is one of those controls that's invisible when it works and a headline when it doesn't. The two failure modes that used to haunt me — lingering access and a missing audit trail — are now handled the same way every time, without anyone remembering to do it. Access is gone fast, and there's a paper trail when audit comes knocking.
+
+Is it the whole story? No. This is the spine of the thing, not a production-hardened service — it leans entirely on Okta being the identity master (anything _not_ wired into Okta SSO still needs its own cleanup), and it trusts the Workday termination signal to be correct (garbage in, deprovisioned-the-wrong-person out). But for the 80% case — kill the account, strip the groups, leave a record — it turns a flaky manual chore into something that just happens.
+
+How fast does _your_ org revoke access after someone walks out the door? If the honest answer is "eventually," maybe it's time to let a script handle the boring part.

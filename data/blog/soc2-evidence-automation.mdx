@@ -1,0 +1,165 @@
+---
+title: 'SOC 2 Evidence Collection: Or, How I Stopped Dreading Audit Season'
+date: '2025-10-27'
+tags: ['Cybersecurity', 'Automation', 'Python', 'Okta', 'S3', 'SOC']
+draft: false
+summary: 'A nightly cron job that pulls control evidence from AWS, Okta, GitHub, CrowdStrike, and Proofpoint into dated, immutable folders in S3 — so audit prep is a download instead of a fire drill.'
+images: ['/static/images/soc2-evidence-automation.png']
+authors: ['default']
+---
+
+Every SOC 2 cycle started the same way: an auditor asks for "evidence that MFA is enforced," and I spend the next three days frantically taking screenshots of consoles I haven't logged into since the _last_ audit. So I automated the whole thing.
+
+![soc2-evidence-automation.png](/static/images/soc2-evidence-automation.png)
+
+### Why Pre-Audit Panic Is a Solvable Problem
+
+SOC 2 is mostly about proving that the controls you _say_ you have are the controls you _actually_ have, on an ongoing basis. The trouble is that "ongoing basis" usually translates to "whatever state the system happened to be in the week the auditor showed up." That's a bad way to run a control program, and an even worse way to spend a week.
+
+The insight is simple: the evidence an auditor wants — MFA enforcement, IAM policies, branch protection, password settings — already lives in APIs. Nobody needs to manually screenshot the Okta admin panel. A console screenshot is just a (worse) rendering of a JSON blob you can fetch on a schedule.
+
+So instead of collecting evidence _before_ the audit, I collect it _continuously_. By the time the auditor asks, the answer is "here's the folder."
+
+- **AWS** — IAM policies, account password policy, root MFA: the access and config controls.
+- **Okta** — MFA enforcement, password policy, sign-on rules, group memberships.
+- **GitHub** — branch protection, org member access, 2FA status.
+- **CrowdStrike** — endpoint coverage and policy, for the "every host is actually protected" control.
+- **Proofpoint** — email security and anti-phishing controls.
+
+Between them they cover the controls auditors hammer on every cycle — access controls, MFA, security-policy enforcement, endpoint protection — and each source has a clean API, so the whole thing is a few hundred lines of Python on a scheduler.
+
+### Setup: Credentials and a Dated Folder Convention
+
+The first design decision was _where evidence goes_. Auditors think in time windows ("show me the state as of Q1"), so the layout mirrors that — one dated folder per run, never overwritten, mirrored to **S3** so the record is durable and immutable. That dated prefix in the bucket _is_ the audit trail.
+
+```python title="Folder layout per run"
+from datetime import date
+from pathlib import Path
+
+def run_dir(base: str = "evidence") -> Path:
+    # One immutable folder per collection run.
+    # Auditors love a timestamp they can point at.
+    today = date.today().isoformat()  # 2026-06-10
+    out = Path(base) / today
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+```
+
+Credentials come from environment variables, because hardcoding an AWS key into your _compliance_ tooling is the kind of irony that ends up in someone else's blog post. Each integration gets a read-only, least-privilege credential — the collector should never be able to _change_ the thing it's auditing.
+
+```python title="Reading scoped credentials"
+import os
+
+def env(name: str) -> str:
+    val = os.environ.get(name)
+    if not val:
+        raise RuntimeError(f"Missing required credential: {name}")
+    return val
+
+OKTA_TOKEN = env("OKTA_API_TOKEN")
+GITHUB_TOKEN = env("GITHUB_TOKEN")
+# AWS creds are picked up by boto3 from the standard chain.
+```
+
+### Pulling Evidence From Each Source
+
+The collectors are deliberately boring. Each one hits an API, gets back JSON, and writes it to disk verbatim. No transformation, no opinions — the raw response _is_ the evidence, and the less I massage it, the harder it is for anyone to argue I cooked the books.
+
+Here's the Okta one, grabbing the password policies that prove the "we enforce strong passwords" control:
+
+```python title="Okta policy collector"
+import json
+import requests
+
+def collect_okta(out_dir, org_url: str, token: str):
+    headers = {"Authorization": f"SSWS {token}"}
+    # Policy types map to specific SOC 2 controls (MFA, password strength, etc.)
+    for policy_type in ("OKTA_SIGN_ON", "PASSWORD", "MFA_ENROLL"):
+        resp = requests.get(
+            f"{org_url}/api/v1/policies",
+            params={"type": policy_type},
+            headers=headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        dest = out_dir / f"okta_{policy_type.lower()}.json"
+        dest.write_text(json.dumps(resp.json(), indent=2))
+```
+
+AWS is similar, except **boto3** does the credential plumbing for me. The interesting bit is grabbing IAM account-level settings — the password policy and whether root has MFA — which auditors ask about _every single time_:
+
+```python title="AWS IAM evidence via boto3"
+import json
+import boto3
+
+def collect_aws(out_dir):
+    iam = boto3.client("iam")
+
+    # Account password policy
+    policy = iam.get_account_password_policy()["PasswordPolicy"]
+    (out_dir / "aws_password_policy.json").write_text(json.dumps(policy, indent=2))
+
+    # Credential report: per-user MFA, key age, last-used, etc.
+    iam.generate_credential_report()
+    report = iam.get_credential_report()["Content"]
+    (out_dir / "aws_credential_report.csv").write_bytes(report)
+```
+
+And GitHub, for branch protection — the "no, you can't push straight to main, here's proof" control:
+
+```python title="GitHub branch protection collector"
+import json
+import requests
+
+def collect_github(out_dir, org: str, repos: list[str], token: str):
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    for repo in repos:
+        resp = requests.get(
+            f"https://api.github.com/repos/{org}/{repo}/branches/main/protection",
+            headers=headers,
+            timeout=30,
+        )
+        # A 404 here is itself evidence (unprotected branch) — record, don't crash.
+        # (Yes, a 5xx gets written too. A real run wants to distinguish those —
+        #  see the limitations section, where I confess to exactly that.)
+        dest = out_dir / f"github_{repo}_branch_protection.json"
+        dest.write_text(json.dumps(resp.json(), indent=2))
+```
+
+That last comment is the one I'm proudest of: a _missing_ protection rule is a finding, not a bug. The collector records reality, whatever reality happens to be.
+
+### Putting It on a Schedule
+
+A collector you have to remember to run is just a more elaborate fire drill. The whole point is that it runs itself. The orchestration is a thin `main()` that fans out to each source — the CrowdStrike and Proofpoint collectors are the same shape as the three above, just a different API and JSON — drops everything in today's dated folder, and mirrors it to S3:
+
+```python title="Orchestrator"
+def main():
+    out = run_dir()                      # local staging, e.g. evidence/2025-10-27/
+    collect_aws(out)                     # access + config controls
+    collect_okta(out, org_url=env("OKTA_ORG_URL"), token=OKTA_TOKEN)   # MFA, password, sign-on
+    collect_github(out, org=env("GITHUB_ORG"),
+                   repos=env("GITHUB_REPOS").split(","), token=GITHUB_TOKEN)
+    collect_crowdstrike(out, token=env("FALCON_TOKEN"))    # endpoint coverage + policy
+    collect_proofpoint(out, token=env("PROOFPOINT_TOKEN"))  # email security controls
+
+    upload_to_s3(out, bucket=env("EVIDENCE_BUCKET"))  # immutable, dated S3 prefix
+    print(f"Evidence collected -> s3://{env('EVIDENCE_BUCKET')}/{out.name}/")
+
+if __name__ == "__main__":
+    main()
+```
+
+Then **cron runs it nightly** and you forget about it. The cadence is a judgment call: too frequent and you're drowning in near-identical snapshots, too sparse and you've got blind spots between runs where a control could quietly drift. Nightly is the sweet spot for us — fresh enough that drift surfaces within a day, cheap enough that S3 doesn't notice. The dated-folder convention pays off here — because nothing is ever overwritten, every run is additive, and the only cost of running more often is disk space.
+
+By audit time you've got a stack of dated folders, each a frozen snapshot of your control posture on that day. When the auditor scopes a date range, you hand over the matching folders and go back to actual work. The first time you do this instead of opening fourteen browser tabs, it feels slightly illicit — like you got away with something. You didn't. You just stopped doing the part that was never worth doing by hand.
+
+### Why This Matters
+
+The business value isn't really "saved a few days of screenshots" (though it did). It's that evidence collection went from a _point-in-time scramble_ to a _continuous record_. If a control quietly breaks in March — someone disables branch protection, MFA enforcement gets loosened — there's a dated artifact showing exactly when it happened, instead of discovering it under an auditor's gaze.
+
+It's not magic, and there are real gaps. Some controls genuinely can't be reduced to an API call (physical security, vendor reviews, the human-process stuff), so those still need a person. The raw-JSON approach is auditor-honest but not auditor-_friendly_ — nobody wants to read a credential report CSV, so there's a case for a thin summary layer on top. The GitHub collector cheerfully writes a 5xx body to disk as if it were evidence, which means "no error logged" isn't the same as "control verified" until I add real status-code handling. And "it runs on a schedule" is doing a lot of trust-me work until you've got alerting on the runs that fail silently.
+
+Still: I haven't taken a panicked console screenshot in a long time. What's the most embarrassing thing _your_ last audit caught that an automated snapshot would've flagged months earlier?
