@@ -6,7 +6,7 @@
   Cache-Control: public, max-age=300, must-revalidate
 
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline' giscus.app analytics.umami.is us.umami.is cloud.umami.is static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:; media-src 'self' https://*.s3.amazonaws.com; connect-src 'self' analytics.umami.is us.umami.is cloud.umami.is cloudflareinsights.com; font-src 'self'; frame-src 'self' giscus.app; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline' giscus.app analytics.umami.is us.umami.is cloud.umami.is static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:; media-src 'self' https://*.s3.amazonaws.com; connect-src 'self' analytics.umami.is us.umami.is cloud.umami.is cloudflareinsights.com; font-src 'self'; frame-src 'self' giscus.app; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
   Referrer-Policy: strict-origin-when-cross-origin
   X-Content-Type-Options: nosniff
   X-DNS-Prefetch-Control: on

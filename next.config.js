@@ -14,6 +14,7 @@ const ContentSecurityPolicy = `
   connect-src 'self' analytics.umami.is us.umami.is cloud.umami.is cloudflareinsights.com;
   font-src 'self';
   frame-src 'self' giscus.app;
+  worker-src 'self' blob:;
   object-src 'none';
   base-uri 'self';
   form-action 'self';
