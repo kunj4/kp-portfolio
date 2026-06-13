@@ -9,7 +9,7 @@ import 'css/pdf.css'
 
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 
-pdfjs.GlobalWorkerOptions.workerSrc = '/static/js/pdf.worker.min.mjs'
+pdfjs.GlobalWorkerOptions.workerSrc = '/static/js/pdf.worker.min.js'
 
 const options = {
   cMapUrl: '/cmaps/',
