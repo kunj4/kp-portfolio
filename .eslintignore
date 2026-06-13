@@ -1,3 +1,4 @@
 node_modules
 .eslintrc.js
 next-env.d.ts
+public/static/js
