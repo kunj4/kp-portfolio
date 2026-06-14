@@ -64,8 +64,9 @@ const AuthorCard = ({ content }) => {
             and automating defenses, that’s all me! No AI is pulling off what I do!
           </p>
           <p>
-            I'm a dedicated Senior Security Engineer focused on safeguarding enterprise applications
-            and cloud environments through risk assessments and innovative security solutions.
+            I'm a dedicated Cybersecurity Professional focused on safeguarding enterprise
+            applications and cloud environments through risk assessments and innovative security
+            solutions.
           </p>
           <div className="py-4">
             <span className="m-2 inline-block rounded-full bg-teal-200 px-2 py-1 text-sm text-teal-900">
