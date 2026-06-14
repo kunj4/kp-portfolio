@@ -1,9 +1,9 @@
 /** @type {import("pliny/config").PlinyConfig } */
 const siteMetadata = {
-  title: 'Kunj Patel — Security Engineer',
+  title: 'Kunj Patel — Cybersecurity Lead',
   author: 'Kunj Patel',
   avatar: '/static/images/avatar.png',
-  occupation: 'Security Engineer · SecOps & GRC',
+  occupation: 'Cybersecurity Lead · SecOps & GRC',
   qualifications: 'MPS Cybersecurity | AWS CCP',
   headerTitle: 'Kunj Patel',
   location: 'Baltimore, MD',
