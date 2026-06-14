@@ -62,7 +62,7 @@ module.exports = () => {
         },
         {
           // Resume PDF is embedded in a same-origin iframe on /resume.
-          source: '/Kunj_Patel_Senior_Security_Engineer.pdf',
+          source: '/Kunj_Patel_Resume.pdf',
           headers: [
             { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
             { key: 'Content-Security-Policy', value: "frame-ancestors 'self'" },

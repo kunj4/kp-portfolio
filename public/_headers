@@ -2,7 +2,7 @@
 # don't apply to exports). X-Frame-Options is set via a Cloudflare Transform
 # Rule that excludes the resume PDF, so it can be embedded in /resume.
 
-/Kunj_Patel_Senior_Security_Engineer.pdf
+/Kunj_Patel_Resume.pdf
   Cache-Control: public, max-age=300, must-revalidate
 
 /*

@@ -45,15 +45,15 @@ export default async function Page() {
     <div className="relative whitespace-nowrap">
       <div className="flex w-full flex-row justify-end">
         <button className="focus:ring-ring text-primary ml-0 inline-flex max-w-full items-center rounded-tl-2xl border border-primary-500 bg-transparent px-2.5 py-0.5 text-xs font-semibold backdrop-blur-md transition-colors duration-150 hover:bg-primary-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-offset-2 sm:ml-0 sm:text-sm md:ml-0 md:text-base">
-          <a href="./Kunj_Patel_Senior_Security_Engineer.pdf" download>
+          <a href="./Kunj_Patel_Resume.pdf" download>
             Download File
           </a>
         </button>
         <button className="focus:ring-ring text-primary ml-0 inline-flex max-w-full items-center rounded-tr-2xl border border-primary-500 bg-transparent px-2.5 py-0.5 text-xs font-semibold backdrop-blur-md transition-colors duration-150 hover:bg-primary-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-offset-2 sm:ml-0 sm:text-sm md:ml-0 md:text-base">
-          <a href="./Kunj_Patel_Senior_Security_Engineer.pdf">View in Native</a>
+          <a href="./Kunj_Patel_Resume.pdf">View in Native</a>
         </button>
       </div>
-      <Resume filename="./Kunj_Patel_Senior_Security_Engineer.pdf" />
+      <Resume filename="./Kunj_Patel_Resume.pdf" />
     </div>
   )
 }
