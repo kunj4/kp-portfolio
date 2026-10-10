@@ -63,7 +63,7 @@
     "eslint-config-prettier": "^8.8.0",
     "eslint-plugin-prettier": "^5.0.0",
     "husky": "^9.0.0",
-    "lint-staged": "^13.0.0",
+    "lint-staged": "^15.5.2",
     "prettier": "^3.0.0",
     "prettier-plugin-tailwindcss": "^0.5.11",
     "raw-loader": "^4.0.2",
@@ -80,6 +80,11 @@
   "resolutions": {
     "protobufjs": "^7.5.5",
     "form-data": "^2.5.6",
-    "postcss": "^8.5.23"
+    "postcss": "^8.5.23",
+    "pliny/js-yaml": "4.3.2",
+    "@typescript-eslint/parser/@typescript-eslint/typescript-estree/minimatch": "^9.0.7",
+    "@typescript-eslint/eslint-plugin/**/@typescript-eslint/typescript-estree/minimatch": "^9.0.7",
+    "**/remark-mdx-frontmatter/toml": "^4.2.0",
+    "**/mdx-bundler/uuid": "^11.1.1"
   }
 }
